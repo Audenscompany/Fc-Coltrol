@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FC Control — Controle Financeiro</title>
+<link rel="icon" href="favicon.png" />
+<!-- Firebase (compat — simples de usar em HTML estático) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<!-- SheetJS — importar planilha Excel direto no navegador -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --green:#2f8a2c; --green-d:#246e22; --green-l:#3a9a34;
+    --gold:#e8a90c; --gold-l:#f7d04a;
+    --red:#d62828; --red-d:#b81f1f;
+    --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb; --bg:#f6f7f5; --card:#ffffff;
+    --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:14px}
+  a{color:inherit;text-decoration:none}
+  .app{display:flex;min-height:100vh}
+
+  /* Barra lateral */
+  .side{width:230px;background:linear-gradient(180deg,#1c3a1b,#143013);color:#e9efe9;display:flex;flex-direction:column;flex-shrink:0}
+  .brand{display:flex;align-items:center;gap:10px;padding:16px 16px 12px}
+  .brand img{width:38px;height:38px}
+  .brand b{font-size:16px;font-weight:800;letter-spacing:.3px}
+  .brand b span{color:var(--gold-l)}
+  .nav{padding:8px;display:flex;flex-direction:column;gap:2px}
+  .nav a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;color:#cfe0cd;font-weight:600;cursor:pointer}
+  .nav a:hover{background:rgba(255,255,255,.06);color:#fff}
+  .nav a.active{background:var(--gold);color:#3a2b00}
+  .nav .ico{width:18px;text-align:center}
+  .side .foot{margin-top:auto;padding:12px 16px;font-size:11px;color:#9fb89d}
+
+  /* Conteúdo */
+  .main{flex:1;min-width:0}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 22px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  .topbar h1{margin:0;font-size:18px}
+  .topbar .sub{color:var(--muted);font-size:12px}
+  .content{padding:22px;max-width:1100px}
+
+  /* Componentes */
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:820px){.g2,.g3,.g4{grid-template-columns:1fr}.side{width:64px}.brand b,.nav a span.lbl,.side .foot{display:none}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+  .card .hd{padding:14px 18px;border-bottom:1px solid var(--line)}
+  .card .hd h3{margin:0;font-size:15px}
+  .card .hd p{margin:2px 0 0;color:var(--muted);font-size:12px}
+  .card .bd{padding:18px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+  .stat .lbl{color:var(--muted);font-size:12px;font-weight:600}
+  .stat .val{font-size:24px;font-weight:800;margin-top:4px}
+  .stat .hint{color:var(--muted);font-size:11px;margin-top:4px}
+  .pos{color:var(--green)} .neg{color:var(--red)} .gold{color:var(--gold)}
+
+  label.f{display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px}
+  input,select{width:100%;padding:9px 10px;border:1px solid #d1d5db;border-radius:9px;font-size:14px;background:#fff;outline:none}
+  input:focus,select:focus{border-color:var(--green-l);box-shadow:0 0 0 3px rgba(58,154,52,.15)}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+  .row > div{flex:1;min-width:120px}
+  .btn{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border:none;border-radius:9px;font-weight:700;font-size:14px;cursor:pointer;background:var(--green);color:#fff}
+  .btn:hover{background:var(--green-d)}
+  .btn.gold{background:var(--gold);color:#3a2b00}.btn.gold:hover{background:#cf960a}
+  .btn.red{background:var(--red);color:#fff}.btn.red:hover{background:var(--red-d)}
+  .btn.ghost{background:#fff;border:1px solid #d1d5db;color:#374151}.btn.ghost:hover{background:#f3f4f6}
+  .btn.sm{padding:6px 11px;font-size:12px}
+
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:9px 10px;font-size:13px;border-bottom:1px solid #f0f0ef}
+  th{color:var(--muted);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  td.r,th.r{text-align:right}
+  tr:hover td{background:#fafbfa}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+  .b-green{background:#e3f4e1;color:var(--green-d)} .b-red{background:#fde3e3;color:var(--red-d)}
+  .b-gold{background:#fcefcc;color:#8a6a00} .b-gray{background:#eef0ee;color:#555}
+  .muted{color:var(--muted)} .small{font-size:12px}
+  .empty{color:#9aa39a;font-size:13px;padding:10px 0}
+  .pend{border:1px solid #f0d488;background:#fffbef;border-radius:12px;padding:12px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+  .toast{position:fixed;right:18px;bottom:18px;background:#143013;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.25);font-weight:600;z-index:50;opacity:0;transform:translateY(8px);transition:.25s}
+  .toast.show{opacity:1;transform:none}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .tabs button{padding:8px 14px;border:1px solid var(--line);background:#fff;border-radius:999px;font-weight:600;cursor:pointer;font-size:13px}
+  .tabs button.active{background:var(--green);color:#fff;border-color:var(--green)}
+  .hr{height:1px;background:var(--line);margin:14px 0}
+  .pill{font-size:11px;background:#eef0ee;border-radius:999px;padding:2px 8px;color:#555}
+  .warn{background:#fff7e6;border:1px solid #f3d99b;color:#7a5a00;padding:10px 12px;border-radius:10px;font-size:13px}
+  .ok{background:#e9f7e7;border:1px solid #b6e0b0;color:#246e22;padding:10px 12px;border-radius:10px;font-size:13px}
+  .err{background:#fdeaea;border:1px solid #f3b8b8;color:#9b1c1c;padding:10px 12px;border-radius:10px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <img src="logo.svg" alt="FC Control" onerror="this.src='logo.png'"/>
+      <b>FC <span>CONTROL</span></b>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="foot">Controle Financeiro<br/><span id="modoDados">modo local</span></div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1 id="pgTitulo">Dashboard</h1>
+        <div class="sub" id="pgSub"></div>
+      </div>
+      <div id="topRight"></div>
+    </div>
+    <div class="content" id="content"></div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================================
+   FC CONTROL — app de controle financeiro (HTML estático + Firebase)
+   ----------------------------------------------------------------------------
+   - Persistência: Firebase Realtime DB se configurado (ver aba Configuração),
+     senão cai em localStorage (modo local) para você já ver funcionando.
+   - Precificação portada do sistema Audens (CMV, markup, preço cardápio/iFood).
+   - Importação da planilha "Delivery Lucrativo" roda no navegador (SheetJS).
+   - As saídas via WhatsApp são gravadas pela FUNÇÃO do comprovante em
+     /caixa/saidas com status "pendente"; aqui você confirma ou descarta.
+   ========================================================================== */
+
+/* ---------- Configuração do Firebase (cole a sua na aba Configuração) -------
+   Você pode também colar direto aqui em firebaseConfig para já subir pronto. */
+let firebaseConfig = JSON.parse(localStorage.getItem("fc_firebase_cfg") || "null") || {
+  apiKey: "AIzaSyAuJ8jYwaHMmEGRK79NPW0CNSyHIyTQyjQ",
+  authDomain: "fc-control-87c59.firebaseapp.com",
+  databaseURL: "https://fc-control-87c59-default-rtdb.firebaseio.com",
+  projectId: "fc-control-87c59",
+  storageBucket: "fc-control-87c59.firebasestorage.app",
+  messagingSenderId: "51794280066",
+  appId: "1:51794280066:web:4a19066678cc57ca3bfe9b",
+  measurementId: "G-11GM9CXLES"
+};
+
+/* ---------------------- Camada de dados (DB) -------------------------------
+   API mínima: DB.list(path,cb), DB.push(path,obj), DB.update(path,obj),
+   DB.remove(path), DB.set(path,obj). Usa Firebase ou localStorage. */
+const DB = (function(){
+  let useFb = false, db = null;
+  const localKey = "fc_data";
+  let local = JSON.parse(localStorage.getItem(localKey) || "{}");
+  const subs = {}; // path -> [cb]
+
+  function saveLocal(){ localStorage.setItem(localKey, JSON.stringify(local)); }
+  function node(path){ return path.split("/").filter(Boolean); }
+  function getLocal(path){ let o=local; for(const k of node(path)){ o=o&&o[k]; } return o; }
+  function setLocal(path,val){ let o=local; const ks=node(path); for(let i=0;i<ks.length-1;i++){ o[ks[i]]=o[ks[i]]||{}; o=o[ks[i]]; } o[ks[ks.length-1]]=val; saveLocal(); }
+  function delLocal(path){ let o=local; const ks=node(path); for(let i=0;i<ks.length-1;i++){ o=o&&o[ks[i]]; if(!o)return; } delete o[ks[ks.length-1]]; saveLocal(); }
+  function emit(path){ const obj=getLocal(path)||{}; (subs[path]||[]).forEach(cb=>cb(obj)); }
+  function uid(){ return "id"+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+
+  function init(){
+    if(firebaseConfig && firebaseConfig.apiKey){
+      try{
+        if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        db = firebase.database(); useFb = true;
+        document.getElementById("modoDados").textContent = "Firebase conectado";
+      }catch(e){ console.warn("Firebase falhou, usando modo local:",e.message); useFb=false; }
+    }
+    if(!useFb) document.getElementById("modoDados").textContent = "modo local (sem Firebase)";
+  }
+
+  return {
+    get useFb(){ return useFb; },
+    init,
+    list(path, cb){
+      if(useFb){ db.ref(path).on("value", s=>cb(s.val()||{})); }
+      else { (subs[path]=subs[path]||[]).push(cb); cb(getLocal(path)||{}); }
+    },
+    push(path, obj){
+      if(useFb){ const ref=db.ref(path).push(); ref.set(obj); return ref.key; }
+      const id=uid(); setLocal(path+"/"+id, obj); emit(path); return id;
+    },
+    set(path, obj){ if(useFb){ db.ref(path).set(obj); } else { setLocal(path,obj); emit(path.split("/").slice(0,-1).join("/")); } },
+    update(path, obj){
+      if(useFb){ db.ref(path).update(obj); }
+      else { const cur=getLocal(path)||{}; setLocal(path, Object.assign({},cur,obj)); emit(path.split("/").slice(0,-1).join("/")); }
+    },
+    remove(path){ if(useFb){ db.ref(path).remove(); } else { delLocal(path); emit(path.split("/").slice(0,-1).join("/")); } }
+  };
+})();
+
+/* ----------------------------- Estado em memória --------------------------- */
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{} };
+
+/* ----------------------------- Utilidades ---------------------------------- */
+const BRL = new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
+const reais = v => BRL.format(Number(v)||0);
+const pct = v => (Number(v)||0).toFixed(1).replace(".",",")+"%";
+const hojeISO = () => new Date().toISOString().slice(0,10);
+const fmtData = iso => { if(!iso) return "—"; const [a,m,d]=iso.slice(0,10).split("-"); return `${d}/${m}/${a}`; };
+const num = v => { const n=Number(String(v??"").replace(/\s/g,"").replace(",", ".")); return Number.isFinite(n)?n:0; };
+const norm = s => (s==null?"":String(s)).normalize("NFD").replace(/[̀-ͯ]/g,"").toUpperCase().replace(/\s+/g," ").trim();
+const mesAtual = () => hojeISO().slice(0,7);
+const noMes = (iso, ym) => (iso||"").slice(0,7) === ym;
+function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2800); }
+function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+const obj2arr = o => Object.entries(o||{}).map(([id,v])=>Object.assign({_id:id}, v));
+
+/* ===================== PRECIFICAÇÃO (portado do Audens) ===================== */
+function custoUnitario(insumo){ const q=num(insumo.quantidadeCompra); return q? num(insumo.valorCompra)/q : 0; }
+function insumoPorNome(nome){ const n=norm(nome); return obj2arr(STATE.insumos).find(i=>norm(i.nome)===n)||null; }
+function cmvProduto(prod){
+  return (prod.ficha||[]).reduce((t,it)=>{
+    const ins = it.insumoNome? insumoPorNome(it.insumoNome) : (it.insumoId? Object.assign({_id:it.insumoId},STATE.insumos[it.insumoId]) : null);
+    const cu = ins? custoUnitario(ins) : num(it.valorUnit);
+    return t + cu*num(it.quantidade);
+  },0);
+}
+/* % de custo fixo/variável CALCULADOS sobre o faturamento (igual planilha). Imposto entra no variável. */
+function parametrosResolvidos(){
+  const p = STATE.parametros||{};
+  const fat = num(p.faturamentoMedio);
+  const custos = obj2arr(STATE.custos);
+  const somaFixo = custos.filter(c=>c.tipo==="FIXO").reduce((s,c)=>s+num(c.valor),0);
+  const somaVar  = custos.filter(c=>c.tipo==="VARIAVEL").reduce((s,c)=>s+num(c.valor),0);
+  const pcfManual = p.percentualCustoFixo, pcvManual = p.percentualCustoVariavel;
+  const percentualCustoFixo = (pcfManual!=null && pcfManual!=="")? num(pcfManual) : (fat? somaFixo/fat*100 : 0);
+  const percentualCustoVariavel = (pcvManual!=null && pcvManual!=="")? num(pcvManual) : ((fat? somaVar/fat*100 : 0) + num(p.taxaImposto));
+  return { percentualCustoFixo, percentualCustoVariavel, lucroDesejado:num(p.lucroDesejado), taxaIfood:num(p.taxaIfood) };
+}
+function calcularMarkup(p, incluirIfood){
+  const soma = p.percentualCustoFixo + p.percentualCustoVariavel + p.lucroDesejado + (incluirIfood? p.taxaIfood:0);
+  const den = 100 - soma; return den<=0? null : 100/den;
+}
+function precoBaseIfood(precoCardapio, taxaIfood){
+  if(precoCardapio==null) return null; const f=1-num(taxaIfood)/100; return f<=0?null:precoCardapio/f;
+}
+function analisarPrecoAtual(cmv, precoAtual, p, precoSugeridoCardapio){
+  const cmvPercentual = precoAtual>0? cmv/precoAtual*100 : 0;
+  const base = precoSugeridoCardapio!=null? precoSugeridoCardapio : precoAtual;
+  const cf = base*(p.percentualCustoFixo/100), cv = base*(p.percentualCustoVariavel/100);
+  const lucroValor = precoAtual - cmv - cf - cv;
+  const lucroPercentual = precoAtual>0? lucroValor/precoAtual*100 : 0;
+  return { cmvPercentual, lucroValor, lucroPercentual, temLucro: lucroValor>0 };
+}
+function precificar(cmv, p, precoAtual){
+  const mk = calcularMarkup(p,false);
+  const precoSugeridoCardapio = mk==null? null : cmv*mk;
+  const precoSugeridoIfood = precoBaseIfood(precoSugeridoCardapio, p.taxaIfood);
+  return { cmv, precoSugeridoCardapio, precoSugeridoIfood,
+    analise: (precoAtual&&precoAtual>0)? analisarPrecoAtual(cmv,precoAtual,p,precoSugeridoCardapio) : null };
+}
+
+/* ============== AUTO-CATEGORIZAÇÃO DA SAÍDA (lógica do bot Z-API) =========== */
+const CATEGORIAS_SAIDA = [
+  {chave:"INSUMOS",grupo:"PRODUCAO",label:"Insumos / Ingredientes"},
+  {chave:"EMBALAGENS",grupo:"PRODUCAO",label:"Embalagens"},
+  {chave:"BEBIDAS",grupo:"PRODUCAO",label:"Bebidas (revenda)"},
+  {chave:"OUTROS_PRODUCAO",grupo:"PRODUCAO",label:"Outros de produção"},
+  {chave:"ALUGUEL",grupo:"OPERACIONAL",label:"Aluguel"},
+  {chave:"SALARIOS",grupo:"OPERACIONAL",label:"Salários / Pró-labore"},
+  {chave:"UTILIDADES",grupo:"OPERACIONAL",label:"Água, Luz, Gás, Internet"},
+  {chave:"MARKETING",grupo:"OPERACIONAL",label:"Marketing"},
+  {chave:"ENTREGA",grupo:"OPERACIONAL",label:"Entrega / Combustível"},
+  {chave:"IMPOSTOS_TAXAS",grupo:"OPERACIONAL",label:"Impostos e Taxas"},
+  {chave:"MANUTENCAO",grupo:"OPERACIONAL",label:"Manutenção"},
+  {chave:"OUTROS_OPERACIONAL",grupo:"OPERACIONAL",label:"Outras despesas"},
+];
+const catInfo = ch => CATEGORIAS_SAIDA.find(c=>c.chave===ch);
+const catLabel = ch => (catInfo(ch)?.label) || ch || "—";
+const grupoDe = ch => (catInfo(ch)?.grupo) || "OPERACIONAL";
+const FORMAS = [
+  {chave:"DINHEIRO",label:"Dinheiro",taxa:0},{chave:"PIX",label:"Pix",taxa:0},
+  {chave:"DEBITO",label:"Débito",taxa:1.5},{chave:"CREDITO",label:"Crédito",taxa:3.2},
+  {chave:"VOUCHER",label:"Voucher/Vale",taxa:5},{chave:"IFOOD",label:"iFood",taxa:23},{chave:"NOVENTA_NOVE",label:"99Food",taxa:18},
+];
+const formaLabel = ch => (FORMAS.find(f=>f.chave===ch)?.label) || ch || "—";
+const formaTaxa = ch => (FORMAS.find(f=>f.chave===ch)?.taxa) || 0;
+const REGRAS_CAT = [
+  ["INSUMOS",["acougue","açougue","carne","frango","frigorifico","hortifruti","sacolao","atacad","supermercado","mercado","distribuidora","frios","queijo","verdura","legume","peixe","assai","tenda","makro","carrefour","comercio","padaria","panificadora"]],
+  ["EMBALAGENS",["embalagem","descartavel","descartável","marmita","sacola","copo descart","guardanapo","isopor","pote"]],
+  ["BEBIDAS",["refrigerante","coca","cerveja","ambev","heineken","brahma","skol","bebida","suco","agua mineral","energetico"]],
+  ["ALUGUEL",["aluguel","locacao","imobiliaria","condominio"]],
+  ["SALARIOS",["salario","folha de pagamento","pro labore","prolabore","vale transporte","adiantamento","funcionario","fgts","inss"]],
+  ["UTILIDADES",["energia","cemig","copel","enel","light","cpfl","agua","sabesp","copasa","gas","ultragaz","comgas","internet","vivo","claro","telefone"]],
+  ["MARKETING",["facebook","meta ","instagram","google ads","marketing","anuncio","impulsion","panfleto","trafego","publicidade"]],
+  ["ENTREGA",["motoboy","uber","99 ","gasolina","combustivel","posto","etanol","ipiranga","shell","entregador","loggi","frete"]],
+  ["IMPOSTOS_TAXAS",["imposto","simples nacional","darf","das ","tarifa","iof","juros","mensalidade","cartorio","contador","contabilidade"]],
+  ["MANUTENCAO",["conserto","manutencao","reforma","tecnico","encanador","eletricista","dedetiza","refrigeracao"]],
+];
+function sugerirCategoria(texto){
+  const t=(texto||"").toLowerCase(); if(!t.trim()) return null;
+  for(const [chave,termos] of REGRAS_CAT){ if(termos.some(x=>t.includes(x))) return chave; }
+  return null;
+}
+
+/* ----------------------------- Roteador ------------------------------------ */
+const PAGINAS = [
+  {id:"dashboard",icon:"📊",label:"Dashboard",render:renderDashboard},
+  {id:"caixa",icon:"💵",label:"Entradas e Saídas",render:renderCaixa},
+  {id:"precificacao",icon:"🏷️",label:"Precificação",render:renderPrecificacao},
+  {id:"dre",icon:"📈",label:"DRE (resultado)",render:renderDRE},
+  {id:"config",icon:"⚙️",label:"Configuração",render:renderConfig},
+];
+let paginaAtual = "dashboard";
+function montarNav(){
+  document.getElementById("nav").innerHTML = PAGINAS.map(p=>
+    `<a data-id="${p.id}" class="${p.id===paginaAtual?'active':''}" onclick="irPara('${p.id}')"><span class="ico">${p.icon}</span><span class="lbl">${p.label}</span></a>`
+  ).join("");
+}
+function irPara(id){ paginaAtual=id; montarNav(); render(); }
+function render(){
+  const pg = PAGINAS.find(p=>p.id===paginaAtual);
+  document.getElementById("pgTitulo").textContent = pg.label;
+  document.getElementById("topRight").innerHTML = "";
+  pg.render(document.getElementById("content"));
+}
+
+/* ===================== AÇÕES (gravam no DB) =============================== */
+function addEntrada(){
+  const data=val("e_data")||hojeISO(), valor=num(val("e_valor")), forma=val("e_forma");
+  if(valor<=0) return toast("Informe o valor da entrada.");
+  DB.push("caixa/entradas",{data,valor,forma,taxaPerc:formaTaxa(forma),descricao:val("e_desc")||null,criadoEm:Date.now()});
+  toast("Entrada lançada.");
+}
+function addSaida(){
+  const data=val("s_data")||hojeISO(), valor=num(val("s_valor")), categoria=val("s_cat");
+  if(valor<=0) return toast("Informe o valor da saída.");
+  DB.push("caixa/saidas",{data,valor,categoria,grupo:grupoDe(categoria),fornecedor:val("s_forn")||null,descricao:val("s_desc")||null,status:"confirmado",origem:"manual",criadoEm:Date.now()});
+  toast("Saída lançada.");
+}
+function confirmarPendente(id){ DB.update("caixa/saidas/"+id,{status:"confirmado"}); toast("Comprovante confirmado e lançado."); }
+function descartarPendente(id){ DB.update("caixa/saidas/"+id,{status:"descartado"}); toast("Comprovante descartado."); }
+function removerMov(tipo,id){ if(confirm("Excluir este lançamento?")){ DB.remove("caixa/"+tipo+"/"+id); toast("Excluído."); } }
+const val = id => { const e=document.getElementById(id); return e? e.value.trim() : ""; };
+
+/* ===================== DASHBOARD =========================================== */
+function renderDashboard(el){
+  document.getElementById("pgSub").textContent = "Visão do mês de "+fmtMesLabel(mesAtual());
+  const ym=mesAtual();
+  const ent = obj2arr(STATE.entradas).filter(e=>noMes(e.data,ym));
+  const sai = obj2arr(STATE.saidas).filter(s=>noMes(s.data,ym) && s.status==="confirmado");
+  const pend = obj2arr(STATE.saidas).filter(s=>s.status==="pendente");
+  const recBruta = ent.reduce((t,e)=>t+num(e.valor),0);
+  const recLiq = ent.reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
+  const desp = sai.reduce((t,s)=>t+num(s.valor),0);
+  const lucro = recLiq-desp;
+  const porCat = {};
+  sai.forEach(s=>{ const k=catLabel(s.categoria); porCat[k]=(porCat[k]||0)+num(s.valor); });
+  const cats = Object.entries(porCat).sort((a,b)=>b[1]-a[1]);
+  el.innerHTML = `
+    ${pend.length? `<div class="warn" style="margin-bottom:14px">📲 Você tem <b>${pend.length}</b> comprovante(s) do WhatsApp aguardando confirmação. <a onclick="irPara('caixa')" style="color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:underline">Ver no Caixa →</a></div>`:""}
+    <div class="grid g4">
+      <div class="stat"><div class="lbl">Receita líquida</div><div class="val pos">${reais(recLiq)}</div><div class="hint">Bruto ${reais(recBruta)} − taxas</div></div>
+      <div class="stat"><div class="lbl">Despesas</div><div class="val neg">${reais(desp)}</div><div class="hint">${sai.length} lançamento(s)</div></div>
+      <div class="stat"><div class="lbl">Lucro estimado</div><div class="val ${lucro>=0?'pos':'neg'}">${reais(lucro)}</div><div class="hint">Receita líq. − despesas</div></div>
+      <div class="stat"><div class="lbl">Margem</div><div class="val">${recLiq>0?pct(lucro/recLiq*100):'—'}</div><div class="hint">do que entra, quanto sobra</div></div>
+    </div>
+    <div class="card" style="margin-top:14px"><div class="hd"><h3>Despesas por categoria — ${fmtMesLabel(ym)}</h3></div><div class="bd">
+      ${cats.length? `<table><thead><tr><th>Categoria</th><th class="r">Valor</th><th class="r">%</th></tr></thead><tbody>${
+        cats.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="r">${reais(v)}</td><td class="r muted">${desp?Math.round(v/desp*100):0}%</td></tr>`).join("")
+      }</tbody></table>` : `<div class="empty">Nenhuma despesa confirmada neste mês.</div>`}
+    </div></div>`;
+}
+function fmtMesLabel(ym){ const [a,m]=ym.split("-"); const ms=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]; return `${ms[Number(m)-1]}/${a}`; }
+
+/* ===================== CAIXA (entradas e saídas) ========================== */
+function renderCaixa(el){
+  document.getElementById("pgSub").textContent = "Lance entradas e saídas. Comprovantes do WhatsApp aparecem aqui para confirmar.";
+  const optForma = FORMAS.map(f=>`<option value="${f.chave}">${f.label}</option>`).join("");
+  const optCat = CATEGORIAS_SAIDA.map(c=>`<option value="${c.chave}">${c.label}</option>`).join("");
+  const fornecedores = [...new Set(obj2arr(STATE.saidas).map(s=>s.fornecedor).filter(Boolean))];
+  const pend = obj2arr(STATE.saidas).filter(s=>s.status==="pendente").sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  const ent = obj2arr(STATE.entradas).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  const sai = obj2arr(STATE.saidas).filter(s=>s.status==="confirmado").sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+
+  el.innerHTML = `
+  ${pend.length? `<div class="card" style="border-color:#f0d488;margin-bottom:14px"><div class="hd"><h3>📲 Comprovantes do WhatsApp (${pend.length})</h3><p>Lidos pela IA a partir das fotos/PDFs do grupo. Confira e confirme — ou responda SIM/NÃO no próprio WhatsApp.</p></div><div class="bd">${
+    pend.map(l=>`<div class="pend"><div>
+        <div><span class="badge ${l.natureza==='ENTRADA'?'b-green':'b-red'}">${l.natureza==='ENTRADA'?'Entrada':'Saída'}</span>
+        <b style="margin-left:6px">${reais(l.valor)}</b> <span class="muted">${l.natureza==='ENTRADA'?formaLabel(l.forma):catLabel(l.categoria)}</span>
+        <span class="muted">· ${fmtData(l.data)}</span></div>
+        <div class="small muted">${l.fornecedor?esc(l.fornecedor)+" — ":""}${esc(l.descricao||"Sem descrição")}</div>
+        ${(l.precisaRevisao||l.pergunta)?`<div class="small" style="color:#9a7400">⚠️ ${esc(l.pergunta||"Confira os dados antes de confirmar.")}</div>`:""}
+      </div><div style="display:flex;gap:8px">
+        <button class="btn sm" onclick="confirmarPendente('${l._id}')">Confirmar</button>
+        <button class="btn sm red" onclick="descartarPendente('${l._id}')">Descartar</button>
+      </div></div>`).join("")
+  }</div></div>`:""}
+
+  <div class="grid g2">
+    <div class="card"><div class="hd"><h3>Nova entrada</h3><p>Total do dia por forma de pagamento. A taxa é descontada sozinha.</p></div><div class="bd">
+      <div class="row">
+        <div><label class="f">Data</label><input type="date" id="e_data" value="${hojeISO()}"></div>
+        <div><label class="f">Valor (R$)</label><input id="e_valor" inputmode="decimal" placeholder="0,00"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div><label class="f">Forma</label><select id="e_forma">${optForma}</select></div>
+        <div><label class="f">Descrição (opcional)</label><input id="e_desc" placeholder="Ex.: fechamento do dia"></div>
+      </div>
+      <button class="btn" style="margin-top:12px" onclick="addEntrada()">Lançar entrada</button>
+    </div></div>
+
+    <div class="card"><div class="hd"><h3>Nova saída</h3><p>Pagamentos do dia. A categoria já vem sugerida pela descrição.</p></div><div class="bd">
+      <div class="row">
+        <div><label class="f">Data</label><input type="date" id="s_data" value="${hojeISO()}"></div>
+        <div><label class="f">Valor (R$)</label><input id="s_valor" inputmode="decimal" placeholder="0,00"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div><label class="f">Categoria</label><select id="s_cat">${optCat}</select></div>
+        <div><label class="f">Fornecedor (opcional)</label><input id="s_forn" list="fornList" placeholder="Nenhum"><datalist id="fornList">${fornecedores.map(f=>`<option value="${esc(f)}">`).join("")}</datalist></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div><label class="f">Descrição (opcional)</label><input id="s_desc" placeholder="Ex.: compra de carne" oninput="autoCat()"></div>
+      </div>
+      <button class="btn red" style="margin-top:12px" onclick="addSaida()">Lançar saída</button>
+    </div></div>
+  </div>
+
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Saídas (${sai.length})</h3></div><div class="bd">
+    ${sai.length? tabela(["Data","Categoria","Grupo","Fornecedor","Descrição","Valor",""], sai.map(s=>[
+      fmtData(s.data), catLabel(s.categoria), s.grupo==="PRODUCAO"?"Produção":"Operacional", esc(s.fornecedor||"—"), esc(s.descricao||"—"),
+      {r:true,h:`<b class="neg">${reais(s.valor)}</b>`}, {r:true,h:`<button class="btn ghost sm" onclick="removerMov('saidas','${s._id}')">excluir</button>`}
+    ])) : `<div class="empty">Nenhuma saída ainda.</div>`}
+  </div></div>
+
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Entradas (${ent.length})</h3></div><div class="bd">
+    ${ent.length? tabela(["Data","Forma","Bruto","Taxa","Líquido","Descrição",""], ent.map(e=>[
+      fmtData(e.data), formaLabel(e.forma), reais(e.valor), pct(e.taxaPerc),
+      {h:`<b class="pos">${reais(num(e.valor)*(1-num(e.taxaPerc)/100))}</b>`}, esc(e.descricao||"—"),
+      {r:true,h:`<button class="btn ghost sm" onclick="removerMov('entradas','${e._id}')">excluir</button>`}
+    ])) : `<div class="empty">Nenhuma entrada ainda.</div>`}
+  </div></div>`;
+}
+function autoCat(){ const s=sugerirCategoria(val("s_desc")); if(s){ const sel=document.getElementById("s_cat"); if(sel) sel.value=s; } }
+function tabela(cabec, linhas){
+  return `<table><thead><tr>${cabec.map(h=>`<th class="${/Valor|Líquido|Bruto|Taxa/.test(h)?'r':''}">${h}</th>`).join("")}</tr></thead><tbody>${
+    linhas.map(cols=>`<tr>${cols.map(c=> (c&&typeof c==="object")? `<td class="${c.r?'r':''}">${c.h}</td>` : `<td>${c}</td>`).join("")}</tr>`).join("")
+  }</tbody></table>`;
+}
+
+/* ===================== PRECIFICAÇÃO ======================================= */
+let abaPrec = "precos";
+function renderPrecificacao(el){
+  document.getElementById("pgSub").textContent = "CMV, markup e preço sugerido (cardápio e iFood). Importe sua planilha para começar.";
+  const abas = [["precos","Tabela de preços"],["produtos","Produtos"],["insumos","Insumos"],["parametros","Parâmetros"],["importar","Importar Excel"]];
+  el.innerHTML = `<div class="tabs">${abas.map(([id,l])=>`<button class="${id===abaPrec?'active':''}" onclick="abaPrec='${id}';render()">${l}</button>`).join("")}</div><div id="abaConteudo"></div>`;
+  const c = document.getElementById("abaConteudo");
+  if(abaPrec==="precos") return precAbaPrecos(c);
+  if(abaPrec==="produtos") return precAbaProdutos(c);
+  if(abaPrec==="insumos") return precAbaInsumos(c);
+  if(abaPrec==="parametros") return precAbaParametros(c);
+  if(abaPrec==="importar") return precAbaImportar(c);
+}
+function precAbaPrecos(c){
+  const p = parametrosResolvidos();
+  const mk = calcularMarkup(p,false);
+  const prods = obj2arr(STATE.produtos);
+  c.innerHTML = `
+    <div class="grid g4" style="margin-bottom:14px">
+      <div class="stat"><div class="lbl">Markup geral</div><div class="val gold">${mk?('×'+mk.toFixed(2)):'—'}</div><div class="hint">100 ÷ (100 − custos − lucro)</div></div>
+      <div class="stat"><div class="lbl">% Custo fixo</div><div class="val">${pct(p.percentualCustoFixo)}</div></div>
+      <div class="stat"><div class="lbl">% Custo variável</div><div class="val">${pct(p.percentualCustoVariavel)}</div><div class="hint">inclui imposto</div></div>
+      <div class="stat"><div class="lbl">Lucro desejado</div><div class="val">${pct(p.lucroDesejado)}</div></div>
+    </div>
+    ${mk==null? `<div class="err">Os custos + lucro somam 100% ou mais — o markup fica impossível. Ajuste os Parâmetros.</div>`:""}
+    <div class="card"><div class="hd"><h3>Preços sugeridos</h3><p>CMV calculado pela ficha técnica. iFood já embute a taxa.</p></div><div class="bd">
+    ${prods.length? `<table><thead><tr><th>Produto</th><th class="r">CMV</th><th class="r">Cardápio</th><th class="r">iFood</th><th class="r">Preço atual</th><th class="r">Lucro atual</th></tr></thead><tbody>${
+      prods.map(pr=>{ const cmv=cmvProduto(pr); const r=precificar(cmv,p,num(pr.precoAtual)); const an=r.analise;
+        return `<tr><td><b>${esc(pr.nome||"—")}</b></td>
+          <td class="r">${reais(cmv)}</td>
+          <td class="r"><b>${r.precoSugeridoCardapio!=null?reais(r.precoSugeridoCardapio):'—'}</b></td>
+          <td class="r">${r.precoSugeridoIfood!=null?reais(r.precoSugeridoIfood):'—'}</td>
+          <td class="r">${pr.precoAtual?reais(pr.precoAtual):'—'}</td>
+          <td class="r">${an? `<span class="badge ${an.temLucro?'b-green':'b-red'}">${reais(an.lucroValor)} (${pct(an.lucroPercentual)})</span>`:'—'}</td></tr>`;
+      }).join("")
+    }</tbody></table>` : `<div class="empty">Nenhum produto cadastrado. Importe a planilha ou cadastre na aba Produtos.</div>`}
+    </div></div>`;
+}
+function precAbaInsumos(c){
+  const ins = obj2arr(STATE.insumos).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  c.innerHTML = `
+    <div class="card"><div class="hd"><h3>Novo insumo</h3></div><div class="bd">
+      <div class="row">
+        <div><label class="f">Nome</label><input id="i_nome" placeholder="Ex.: Carne moída"></div>
+        <div><label class="f">Qtd. da compra</label><input id="i_qtd" inputmode="decimal" placeholder="ex.: 1000"></div>
+        <div><label class="f">Unidade</label><input id="i_un" placeholder="g, ml, un"></div>
+        <div><label class="f">Valor da compra (R$)</label><input id="i_val" inputmode="decimal" placeholder="0,00"></div>
+      </div>
+      <button class="btn" style="margin-top:12px" onclick="addInsumo()">Adicionar insumo</button>
+    </div></div>
+    <div class="card" style="margin-top:14px"><div class="hd"><h3>Insumos (${ins.length})</h3><p>Custo unitário = valor ÷ quantidade. Atualiza o CMV automaticamente.</p></div><div class="bd">
+    ${ins.length? `<table><thead><tr><th>Insumo</th><th class="r">Qtd</th><th>Un.</th><th class="r">Valor compra</th><th class="r">Custo unit.</th><th></th></tr></thead><tbody>${
+      ins.map(i=>`<tr><td><b>${esc(i.nome)}</b></td><td class="r">${num(i.quantidadeCompra)}</td><td>${esc(i.unidade||"—")}</td><td class="r">${reais(i.valorCompra)}</td><td class="r gold">${reais(custoUnitario(i))}</td><td class="r"><button class="btn ghost sm" onclick="removerInsumo('${i._id}')">excluir</button></td></tr>`).join("")
+    }</tbody></table>` : `<div class="empty">Nenhum insumo ainda.</div>`}
+    </div></div>`;
+}
+function addInsumo(){ const nome=val("i_nome"); if(!nome) return toast("Informe o nome do insumo."); DB.push("insumos",{nome,quantidadeCompra:num(val("i_qtd"))||1,unidade:val("i_un")||"un",valorCompra:num(val("i_val"))}); toast("Insumo adicionado."); }
+function removerInsumo(id){ if(confirm("Excluir insumo?")){ DB.remove("insumos/"+id); } }
+function precAbaProdutos(c){
+  const prods = obj2arr(STATE.produtos).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  const p = parametrosResolvidos();
+  c.innerHTML = `
+    <div class="card"><div class="hd"><h3>Novo produto</h3><p>Cadastre o produto e depois monte a ficha técnica (insumos × quantidade).</p></div><div class="bd">
+      <div class="row">
+        <div><label class="f">Nome</label><input id="p_nome" placeholder="Ex.: X-Burguer"></div>
+        <div><label class="f">Preço atual de venda (opcional)</label><input id="p_preco" inputmode="decimal" placeholder="0,00"></div>
+      </div>
+      <button class="btn" style="margin-top:12px" onclick="addProduto()">Adicionar produto</button>
+    </div></div>
+    <div class="card" style="margin-top:14px"><div class="hd"><h3>Produtos (${prods.length})</h3></div><div class="bd">
+    ${prods.length? prods.map(pr=>{ const cmv=cmvProduto(pr); const r=precificar(cmv,p,num(pr.precoAtual));
+      return `<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center">
+          <div><b>${esc(pr.nome||"—")}</b> <span class="pill">CMV ${reais(cmv)}</span> <span class="pill">Sugerido ${r.precoSugeridoCardapio!=null?reais(r.precoSugeridoCardapio):'—'}</span></div>
+          <button class="btn ghost sm" onclick="removerProduto('${pr._id}')">excluir produto</button>
+        </div>
+        <div class="hr"></div>
+        <div class="small muted" style="margin-bottom:6px">Ficha técnica</div>
+        ${(pr.ficha&&pr.ficha.length)? `<table><thead><tr><th>Insumo</th><th class="r">Qtd</th><th class="r">Custo</th><th></th></tr></thead><tbody>${
+          pr.ficha.map((it,idx)=>{ const ins=it.insumoNome?insumoPorNome(it.insumoNome):null; const cu=ins?custoUnitario(ins):num(it.valorUnit);
+            return `<tr><td>${esc(it.insumoNome||(ins&&ins.nome)||"—")}</td><td class="r">${num(it.quantidade)}</td><td class="r">${reais(cu*num(it.quantidade))}</td><td class="r"><button class="btn ghost sm" onclick="removerFicha('${pr._id}',${idx})">×</button></td></tr>`;
+          }).join("")
+        }</tbody></table>` : `<div class="empty">Sem itens na ficha.</div>`}
+        <div class="row" style="margin-top:10px">
+          <div><label class="f">Insumo</label><input id="fi_nome_${pr._id}" list="insList" placeholder="nome do insumo"></div>
+          <div><label class="f">Quantidade</label><input id="fi_qtd_${pr._id}" inputmode="decimal" placeholder="ex.: 150"></div>
+          <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="addFicha('${pr._id}')">+ item</button></div>
+        </div>
+      </div>`;
+    }).join("") : `<div class="empty">Nenhum produto ainda.</div>`}
+    <datalist id="insList">${obj2arr(STATE.insumos).map(i=>`<option value="${esc(i.nome)}">`).join("")}</datalist>
+    </div></div>`;
+}
+function addProduto(){ const nome=val("p_nome"); if(!nome) return toast("Informe o nome do produto."); DB.push("produtos",{nome,precoAtual:num(val("p_preco"))||null,ficha:[]}); toast("Produto adicionado."); }
+function removerProduto(id){ if(confirm("Excluir produto?")){ DB.remove("produtos/"+id); } }
+function addFicha(pid){ const nome=val("fi_nome_"+pid), q=num(val("fi_qtd_"+pid)); if(!nome||q<=0) return toast("Preencha insumo e quantidade."); const pr=STATE.produtos[pid]; const ficha=(pr.ficha||[]).concat([{insumoNome:nome,quantidade:q}]); DB.update("produtos/"+pid,{ficha}); toast("Item adicionado à ficha."); }
+function removerFicha(pid,idx){ const pr=STATE.produtos[pid]; const ficha=(pr.ficha||[]).filter((_,i)=>i!==idx); DB.update("produtos/"+pid,{ficha}); }
+function precAbaParametros(c){
+  const p=STATE.parametros||{};
+  c.innerHTML = `<div class="card"><div class="hd"><h3>Parâmetros de precificação</h3><p>Faturamento médio do mês, lucro desejado, imposto e taxa do iFood. Os % de custo são calculados sozinhos a partir das suas despesas; você pode forçar um % se quiser.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Faturamento médio mensal (R$)</label><input id="pa_fat" inputmode="decimal" value="${p.faturamentoMedio??''}"></div>
+      <div><label class="f">Lucro desejado (%)</label><input id="pa_lucro" inputmode="decimal" value="${p.lucroDesejado??''}"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Imposto (%)</label><input id="pa_imp" inputmode="decimal" value="${p.taxaImposto??''}"></div>
+      <div><label class="f">Taxa do iFood (%)</label><input id="pa_ifood" inputmode="decimal" value="${p.taxaIfood??23}"></div>
+    </div>
+    <div class="hr"></div>
+    <div class="row">
+      <div><label class="f">% Custo fixo (deixe vazio p/ calcular)</label><input id="pa_cf" inputmode="decimal" value="${p.percentualCustoFixo??''}" placeholder="auto"></div>
+      <div><label class="f">% Custo variável (deixe vazio p/ calcular)</label><input id="pa_cv" inputmode="decimal" value="${p.percentualCustoVariavel??''}" placeholder="auto"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="salvarParametros()">Salvar parâmetros</button>
+  </div></div>`;
+}
+function salvarParametros(){
+  DB.set("parametros",{
+    faturamentoMedio:num(val("pa_fat")), lucroDesejado:num(val("pa_lucro")), taxaImposto:num(val("pa_imp")), taxaIfood:num(val("pa_ifood")),
+    percentualCustoFixo: val("pa_cf")===""?null:num(val("pa_cf")), percentualCustoVariavel: val("pa_cv")===""?null:num(val("pa_cv")),
+  });
+  toast("Parâmetros salvos.");
+}
+
+/* ===================== DRE ================================================= */
+function renderDRE(el){
+  const ym=mesAtual();
+  document.getElementById("pgSub").textContent = "Resultado de "+fmtMesLabel(ym);
+  const ent=obj2arr(STATE.entradas).filter(e=>noMes(e.data,ym));
+  const sai=obj2arr(STATE.saidas).filter(s=>noMes(s.data,ym)&&s.status==="confirmado");
+  const recLiq=ent.reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
+  const prod=sai.filter(s=>s.grupo==="PRODUCAO").reduce((t,s)=>t+num(s.valor),0);
+  const oper=sai.filter(s=>s.grupo!=="PRODUCAO").reduce((t,s)=>t+num(s.valor),0);
+  const result=recLiq-prod-oper;
+  const linha=(lbl,v,cls)=>`<tr><td>${lbl}</td><td class="r ${cls||''}">${reais(v)}</td></tr>`;
+  el.innerHTML = `<div class="card" style="max-width:560px"><div class="hd"><h3>DRE simplificado — ${fmtMesLabel(ym)}</h3><p>Faturamento − custos = resultado.</p></div><div class="bd">
+    <table><tbody>
+      ${linha("Receita líquida (vendas − taxas)",recLiq,"pos")}
+      ${linha("(−) Custos de produção (CMV/insumos)",-prod,"neg")}
+      ${linha("(−) Despesas operacionais",-oper,"neg")}
+      <tr style="border-top:2px solid var(--ink)"><td><b>= Resultado do mês</b></td><td class="r"><b class="${result>=0?'pos':'neg'}">${reais(result)}</b></td></tr>
+    </tbody></table>
+    <div class="small muted" style="margin-top:10px">${result>=0?"Você teve lucro neste mês. 🎉":"Atenção: as despesas superaram o que entrou."}</div>
+  </div></div>`;
+}
+
+/* ===================== IMPORTAR EXCEL (planilha Delivery Lucrativo) ======== */
+function precAbaImportar(c){
+  c.innerHTML = `<div class="card"><div class="hd"><h3>Importar planilha "Delivery Lucrativo"</h3><p>Selecione o arquivo .xlsx. Tudo é lido no seu navegador. Ao importar, a precificação atual é substituída pela da planilha.</p></div><div class="bd">
+    <input type="file" id="arq" accept=".xlsx,.xls"/>
+    <div id="previa" style="margin-top:14px"></div>
+  </div></div>`;
+  document.getElementById("arq").addEventListener("change", lerExcel);
+}
+function lerExcel(ev){
+  const file=ev.target.files[0]; if(!file) return;
+  const prev=document.getElementById("previa"); prev.innerHTML='<div class="muted">Lendo planilha…</div>';
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:"array"});
+      const mapa={}; wb.SheetNames.forEach(n=>{ mapa[norm(n)]=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:null}); });
+      const r=interpretarPlanilha(n=>mapa[norm(n)]||null);
+      if(!r.ok){ prev.innerHTML=`<div class="err">${r.erros.map(esc).join("<br>")}</div>`; return; }
+      const d=r.dados;
+      prev.innerHTML=`
+        ${r.avisos.length?`<div class="warn" style="margin-bottom:10px">${r.avisos.map(esc).join("<br>")}</div>`:""}
+        <div class="ok">Planilha lida! Encontrei: <b>${d.insumos.length}</b> insumos, <b>${d.produtos.length}</b> produtos, <b>${d.bebidas.length}</b> bebidas, <b>${d.custos.length}</b> custos.<br>
+        Faturamento médio ${reais(d.parametros.faturamentoMedio)} · Lucro ${pct(d.parametros.lucroDesejado)} · Imposto ${pct(d.parametros.taxaImposto)}.</div>
+        <button class="btn" style="margin-top:12px" onclick='aplicarImport()'>Importar e substituir precificação</button>`;
+      window._importPrevia=d;
+    }catch(err){ prev.innerHTML=`<div class="err">Não consegui ler o arquivo (${esc(err.message)}). Envie em .xlsx.</div>`; }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function aplicarImport(){
+  const d=window._importPrevia; if(!d) return;
+  // Insumos extras (que só aparecem na ficha): cria com custo da própria ficha.
+  const nomes=new Set(d.insumos.map(i=>norm(i.nome)));
+  const extras=[];
+  d.produtos.forEach(p=>p.itens.forEach(it=>{ if(!nomes.has(norm(it.insumoNome))){ nomes.add(norm(it.insumoNome)); extras.push({nome:it.insumoNome,quantidadeCompra:1,unidade:"un",valorCompra:it.valorUnit}); } }));
+  const insumosObj={}, produtosObj={}, custosObj={};
+  [...d.insumos,...extras].forEach((i,k)=>insumosObj["i"+k]={nome:i.nome,quantidadeCompra:i.quantidadeCompra,unidade:i.unidade||"un",valorCompra:i.valorCompra});
+  d.produtos.forEach((p,k)=>produtosObj["p"+k]={nome:p.nome,precoAtual:p.precoAtual,ficha:p.itens.map(it=>({insumoNome:it.insumoNome,quantidade:it.quantidade,valorUnit:it.valorUnit}))});
+  d.custos.forEach((c2,k)=>custosObj["c"+k]={tipo:c2.tipo,categoria:c2.categoria,descricao:c2.descricao,valor:c2.valor});
+  DB.set("insumos",insumosObj); DB.set("produtos",produtosObj); DB.set("custos",custosObj);
+  DB.set("parametros",Object.assign({},STATE.parametros,{faturamentoMedio:d.parametros.faturamentoMedio,lucroDesejado:d.parametros.lucroDesejado,taxaImposto:d.parametros.taxaImposto,taxaIfood:(STATE.parametros&&STATE.parametros.taxaIfood)||23}));
+  toast("Planilha importada com sucesso!"); abaPrec="precos"; render();
+}
+
+/* ====== PARSER DA PLANILHA (portado de importacaoPlanilha.ts do Audens) ==== */
+const ABAS_OBRIGATORIAS=["PRODUTOS","FICHA TECNICA","BEBIDAS","CUSTOS FIXOS","CUSTOS VARIAVEIS","DADOS"];
+function _toNum(v){ if(v==null||v==="")return NaN; if(typeof v==="number")return v; return Number(String(v).replace(/\s/g,"").replace(",", ".")); }
+const _cell=(m,r,c)=>(m[r]&&m[r][c]!=null)?m[r][c]:null;
+function _find(m,pred){ for(let r=0;r<m.length;r++){const row=m[r]; if(!row)continue; for(let c=0;c<row.length;c++){ if(pred(norm(row[c])))return{r,c}; }} return null; }
+function _findAll(m,pred){ const o=[]; for(let r=0;r<m.length;r++){const row=m[r]; if(!row)continue; for(let c=0;c<row.length;c++){ if(pred(norm(row[c])))o.push({r,c}); }} return o; }
+function _parseInsumos(m){ const pos=_find(m,n=>n==="ITENS"); if(!pos)return[]; const out=[]; for(let r=pos.r+1;r<m.length;r++){ const nome=String(_cell(m,r,0)??"").trim(); if(!nome)continue; if(norm(nome)==="TOTAL")break; const valorCompra=_toNum(_cell(m,r,2)); if(!Number.isFinite(valorCompra)||valorCompra<=0)continue; const q=_toNum(_cell(m,r,1)); out.push({nome,unidade:"g",quantidadeCompra:Number.isFinite(q)&&q>0?q:1,valorCompra}); } return out; }
+function _parseProdutos(m){ const produtos=[]; for(const {r,c} of _findAll(m,n=>n==="PRODUTO")){ const nb=String(_cell(m,r,c+1)??"").trim(); if(!nb)continue; const nome=norm(nb).startsWith("NOME DO SEU PRODUTO")?("Produto "+((nb.match(/\d+/)||[""])[0])).trim():nb; const itens=[]; for(let rr=r+2;rr<Math.min(m.length,r+2+80);rr++){ const insNome=String(_cell(m,rr,c)??"").trim(); const n=norm(insNome); if(!insNome)break; if(n==="ITEM")continue; if(n.startsWith("RESUMO")||n.startsWith("CUSTO DE PRODUTOS"))break; const quantidade=_toNum(_cell(m,rr,c+2)); const valorUnit=_toNum(_cell(m,rr,c+1)); if(!Number.isFinite(quantidade)||quantidade<=0)continue; itens.push({insumoNome:insNome,quantidade,valorUnit:Number.isFinite(valorUnit)?valorUnit:0}); } let precoAtual=null; for(let rr=r+2;rr<Math.min(m.length,r+45);rr++){ for(let cc=c;cc<=c+3;cc++){ if(norm(_cell(m,rr,cc)).includes("PRECO ATUAL DE VENDA")){ const v=_toNum(_cell(m,rr,c+3)); if(Number.isFinite(v)&&v>0)precoAtual=v; } } } if(itens.length>0)produtos.push({nome,precoAtual,itens}); } return produtos; }
+function _parseBebidas(m){ const pos=_find(m,n=>n==="ITENS"); if(!pos)return[]; const out=[]; for(let r=pos.r+1;r<m.length;r++){ const nome=String(_cell(m,r,0)??"").trim(); if(!nome)continue; if(norm(nome)==="TOTAL")break; const custo=_toNum(_cell(m,r,1)); if(!Number.isFinite(custo)||custo<=0)continue; const pv=_toNum(_cell(m,r,8)); out.push({nome,custo,precoVenda:Number.isFinite(pv)&&pv>0?pv:null}); } return out; }
+const _SEC_FIXAS=[{label:"SALARIOS FREELANCER",nameCol:0,valueCol:4,categoria:"FREELANCER"},{label:"CUSTOS DE FUNCIONAMENTO",nameCol:7,valueCol:8,categoria:"FUNCIONAMENTO"},{label:"LANCHE FUNCIONARIO",nameCol:11,valueCol:12,quantCol:13,categoria:"LANCHE"},{label:"PRO-LABORE",nameCol:11,valueCol:13,categoria:"PRO_LABORE"},{label:"SALARIOS CLT",nameCol:0,valueCol:1,categoria:"CLT"},{label:"CUSTOS GERAIS",nameCol:7,valueCol:8,categoria:"GERAIS"},{label:"MOTOBOYS",nameCol:0,valueCol:4,categoria:"MOTOBOYS"}];
+const _SEC_VAR=[{label:"EMPRESTIMOS",nameCol:0,valueCol:1,categoria:"EMPRESTIMOS"},{label:"TAXAS GERAIS",nameCol:3,valueCol:4,categoria:"TAXAS"},{label:"CUSTOS GERAIS",nameCol:6,valueCol:7,categoria:"OUTROS"}];
+function _lerSecao(m,s,tipo){ const pos=_find(m,n=>n===s.label); if(!pos)return[]; const out=[]; for(let r=pos.r+1;r<Math.min(m.length,pos.r+40);r++){ const desc=String(_cell(m,r,s.nameCol)??"").trim(); if(norm(desc)==="TOTAL")break; const vu=_toNum(_cell(m,r,s.valueCol)); const valor=s.quantCol!=null?vu*_toNum(_cell(m,r,s.quantCol)):vu; if(desc&&Number.isFinite(valor)&&valor>0)out.push({tipo,categoria:s.categoria,descricao:desc,valor}); } return out; }
+function _parseParametros(mD,taxaImposto){ let fat=0; const mp=_find(mD,n=>n==="MES"); if(mp){ const vc=mp.c+1; const vals=[]; for(let r=mp.r+1;r<Math.min(mD.length,mp.r+20);r++){ if(norm(_cell(mD,r,mp.c))==="TOTAL")break; const v=_toNum(_cell(mD,r,vc)); if(Number.isFinite(v)&&v>0)vals.push(v); } if(vals.length)fat=vals.reduce((a,b)=>a+b,0)/vals.length; } let lucro=0; const lp=_find(mD,n=>n.includes("LUCRO (%)")); if(lp){ const v=_toNum(_cell(mD,lp.r,lp.c+1)); if(Number.isFinite(v))lucro=v; } return {faturamentoMedio:fat,lucroDesejado:lucro,taxaImposto}; }
+function _parseImposto(mV){ const pos=_find(mV,n=>n.includes("TAXA DE IMPOSTO")); if(!pos)return 0; const v=_toNum(_cell(mV,pos.r,pos.c+1)); return Number.isFinite(v)?v:0; }
+function interpretarPlanilha(getSheet){
+  const erros=[],avisos=[];
+  const faltando=ABAS_OBRIGATORIAS.filter(a=>!getSheet(a));
+  if(faltando.length){ erros.push('A planilha não parece ser a "Delivery Lucrativo": faltam as abas '+faltando.join(", ")+"."); return {ok:false,erros,avisos}; }
+  const mProd=getSheet("PRODUTOS"),mFicha=getSheet("FICHA TECNICA"),mBeb=getSheet("BEBIDAS"),mFix=getSheet("CUSTOS FIXOS"),mVar=getSheet("CUSTOS VARIAVEIS"),mDad=getSheet("DADOS");
+  const insumos=_parseInsumos(mProd), produtos=_parseProdutos(mFicha), bebidas=_parseBebidas(mBeb);
+  const custos=[..._SEC_FIXAS.flatMap(s=>_lerSecao(mFix,s,"FIXO")),..._SEC_VAR.flatMap(s=>_lerSecao(mVar,s,"VARIAVEL"))];
+  const taxaImposto=_parseImposto(mVar); const parametros=_parseParametros(mDad,taxaImposto);
+  const nomesInsumo=new Set(insumos.map(i=>norm(i.nome)));
+  const semInsumo=produtos.flatMap(p=>p.itens).filter(i=>!nomesInsumo.has(norm(i.insumoNome))).length;
+  if(semInsumo>0)avisos.push(semInsumo+" item(ns) de ficha técnica não tinham insumo na aba PRODUTOS — serão criados a partir do custo da ficha.");
+  if(insumos.length===0&&produtos.length===0&&bebidas.length===0){ erros.push("Não encontrei insumos, produtos nem bebidas preenchidos."); return {ok:false,erros,avisos}; }
+  return {ok:true,erros,avisos,dados:{insumos,produtos,bebidas,custos,parametros}};
+}
+
+/* ===================== CONFIGURAÇÃO ======================================= */
+function renderConfig(el){
+  document.getElementById("pgSub").textContent = "Conecte o Firebase para salvar na nuvem e receber os comprovantes do WhatsApp.";
+  const cfg = firebaseConfig? JSON.stringify(firebaseConfig,null,2) : "";
+  el.innerHTML = `
+  <div class="card"><div class="hd"><h3>Firebase (nuvem + WhatsApp)</h3><p>No console do Firebase: ⚙️ Configurações do projeto → Seus apps (Web) → copie o objeto firebaseConfig e cole aqui. Sem isso, o app roda em "modo local" só neste navegador.</p></div><div class="bd">
+    <label class="f">Cole aqui o firebaseConfig (JSON)</label>
+    <textarea id="cfg" style="width:100%;height:170px;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:9px;padding:10px" placeholder='{
+  "apiKey": "...",
+  "authDomain": "...",
+  "databaseURL": "https://....firebasedatabase.app",
+  "projectId": "..."
+}'>${esc(cfg)}</textarea>
+    <div class="row" style="margin-top:12px">
+      <div style="flex:0"><button class="btn" onclick="salvarFirebase()">Salvar e conectar</button></div>
+      <div style="flex:0"><button class="btn ghost" onclick="limparFirebase()">Voltar ao modo local</button></div>
+    </div>
+    <div class="small muted" style="margin-top:10px">Status: <b>${DB.useFb?"Firebase conectado":"modo local"}</b></div>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Como o WhatsApp entra aqui</h3></div><div class="bd small">
+    A função do comprovante (pasta <code>funcao-comprovante</code>) recebe a foto/PDF do grupo via Z-API, lê com IA e grava em <code>caixa/saidas</code> com status <b>pendente</b>. Eles aparecem no Caixa para você confirmar. Veja o passo a passo no arquivo <b>GUIA.md</b>.
+  </div></div>`;
+}
+function salvarFirebase(){
+  let txt = val("cfg").trim();
+  if(!txt){ return toast("Cole a configuração do Firebase primeiro."); }
+  // Aceita tanto JSON puro quanto o trecho que o console do Firebase mostra
+  // (ex.: "const firebaseConfig = { apiKey: ... };" — chaves sem aspas).
+  let cfg=null;
+  try{ cfg = JSON.parse(txt); }catch(_){}
+  if(!cfg){
+    try{
+      const ini = txt.indexOf("{"), fim = txt.lastIndexOf("}");
+      if(ini>=0 && fim>ini){ cfg = (new Function("return ("+txt.slice(ini,fim+1)+")"))(); }
+    }catch(_){}
+  }
+  if(!cfg || !cfg.apiKey){ return toast("Não entendi a configuração. Cole o bloco firebaseConfig do console."); }
+  if(!cfg.databaseURL){ return toast("Falta o databaseURL — crie o Realtime Database e copie a URL (…firebasedatabase.app)."); }
+  localStorage.setItem("fc_firebase_cfg", JSON.stringify(cfg));
+  toast("Configuração salva. Conectando…");
+  setTimeout(()=>location.reload(),800);
+}
+function limparFirebase(){ localStorage.removeItem("fc_firebase_cfg"); toast("Modo local. Recarregando…"); setTimeout(()=>location.reload(),600); }
+
+/* ----------------------------- Boot ---------------------------------------- */
+function boot(){
+  DB.init();
+  montarNav();
+  const bind = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; render(); });
+  bind("insumos","insumos");
+  bind("produtos","produtos");
+  bind("caixa/saidas","saidas");
+  bind("caixa/entradas","entradas");
+  bind("custos","custos");
+  DB.list("parametros", v=>{ STATE.parametros = v||{}; render(); });
+  render();
+}
+window.addEventListener("DOMContentLoaded", boot);
+</script>
+</body>
+</html>
