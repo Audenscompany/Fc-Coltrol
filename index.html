@@ -88,6 +88,11 @@
   .tabs button.active{background:var(--green);color:#fff;border-color:var(--green)}
   .hr{height:1px;background:var(--line);margin:14px 0}
   .pill{font-size:11px;background:#eef0ee;border-radius:999px;padding:2px 8px;color:#555}
+  .resumo{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 18px;margin-bottom:6px}
+  @media(max-width:680px){.resumo{grid-template-columns:1fr}}
+  .rz{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;border-bottom:1px dashed #eee;font-size:13px}
+  .rz span:first-child{color:var(--muted)}
+  .precoEdit{width:110px;text-align:right;padding:5px 8px}
   .warn{background:#fff7e6;border:1px solid #f3d99b;color:#7a5a00;padding:10px 12px;border-radius:10px;font-size:13px}
   .ok{background:#e9f7e7;border:1px solid #b6e0b0;color:#246e22;padding:10px 12px;border-radius:10px;font-size:13px}
   .err{background:#fdeaea;border:1px solid #f3b8b8;color:#9b1c1c;padding:10px 12px;border-radius:10px;font-size:13px}
@@ -180,7 +185,7 @@ const DB = (function(){
       if(useFb){ const ref=db.ref(path).push(); ref.set(obj); return ref.key; }
       const id=uid(); setLocal(path+"/"+id, obj); emit(path); return id;
     },
-    set(path, obj){ if(useFb){ db.ref(path).set(obj); } else { setLocal(path,obj); emit(path.split("/").slice(0,-1).join("/")); } },
+    set(path, obj){ if(useFb){ db.ref(path).set(obj); } else { setLocal(path,obj); emit(path); emit(path.split("/").slice(0,-1).join("/")); } },
     update(path, obj){
       if(useFb){ db.ref(path).update(obj); }
       else { const cur=getLocal(path)||{}; setLocal(path, Object.assign({},cur,obj)); emit(path.split("/").slice(0,-1).join("/")); }
@@ -210,11 +215,16 @@ const obj2arr = o => Object.entries(o||{}).map(([id,v])=>Object.assign({_id:id},
 function custoUnitario(insumo){ const q=num(insumo.quantidadeCompra); return q? num(insumo.valorCompra)/q : 0; }
 function insumoPorNome(nome){ const n=norm(nome); return obj2arr(STATE.insumos).find(i=>norm(i.nome)===n)||null; }
 function cmvProduto(prod){
-  return (prod.ficha||[]).reduce((t,it)=>{
-    const ins = it.insumoNome? insumoPorNome(it.insumoNome) : (it.insumoId? Object.assign({_id:it.insumoId},STATE.insumos[it.insumoId]) : null);
-    const cu = ins? custoUnitario(ins) : num(it.valorUnit);
-    return t + cu*num(it.quantidade);
-  },0);
+  // Com ficha técnica: soma custo unitário × quantidade. Sem ficha (produto importado da
+  // RELAÇÃO DE PRODUTOS ou cadastrado direto): usa o CMV salvo em cmvManual.
+  if(prod.ficha && prod.ficha.length){
+    return prod.ficha.reduce((t,it)=>{
+      const ins = it.insumoNome? insumoPorNome(it.insumoNome) : (it.insumoId? Object.assign({_id:it.insumoId},STATE.insumos[it.insumoId]) : null);
+      const cu = ins? custoUnitario(ins) : num(it.valorUnit);
+      return t + cu*num(it.quantidade);
+    },0);
+  }
+  return num(prod.cmvManual);
 }
 /* % de custo fixo/variável CALCULADOS sobre o faturamento (igual planilha). Imposto entra no variável. */
 function parametrosResolvidos(){
@@ -249,6 +259,27 @@ function precificar(cmv, p, precoAtual){
   const precoSugeridoIfood = precoBaseIfood(precoSugeridoCardapio, p.taxaIfood);
   return { cmv, precoSugeridoCardapio, precoSugeridoIfood,
     analise: (precoAtual&&precoAtual>0)? analisarPrecoAtual(cmv,precoAtual,p,precoSugeridoCardapio) : null };
+}
+/* Resumo completo de um produto — espelha o bloco "RESUMO PRECIFICAÇÃO" da planilha.
+   Tudo calculado como % do preço (atual): lucro% = 100 − CMV% − %custoFixo − %custoVariável. */
+function resumoProduto(prod){
+  const p = parametrosResolvidos();
+  const cmv = cmvProduto(prod);
+  const precoAtual = num(prod.precoAtual);
+  const mk = calcularMarkup(p,false);
+  const sugerido = mk==null? null : cmv*mk;
+  const sugeridoIfood = precoBaseIfood(sugerido, p.taxaIfood);
+  const pctCF = p.percentualCustoFixo, pctCV = p.percentualCustoVariavel, pctCFCV = pctCF + pctCV;
+  const r = { cmv, precoAtual, sugerido, sugeridoIfood, pctCF, pctCV, pctCFCV,
+    cmvPct:null, cfcvValor:null, lucroValor:null, lucroPct:null, difSugerido:null };
+  if(precoAtual>0){
+    r.cmvPct = cmv/precoAtual*100;
+    r.cfcvValor = precoAtual*pctCFCV/100;
+    r.lucroPct = 100 - r.cmvPct - pctCFCV;
+    r.lucroValor = precoAtual*r.lucroPct/100;
+    r.difSugerido = sugerido!=null? (precoAtual - sugerido) : null;
+  }
+  return r;
 }
 
 /* ============== AUTO-CATEGORIZAÇÃO DA SAÍDA (lógica do bot Z-API) =========== */
@@ -299,6 +330,7 @@ const PAGINAS = [
   {id:"dashboard",icon:"📊",label:"Dashboard",render:renderDashboard},
   {id:"caixa",icon:"💵",label:"Entradas e Saídas",render:renderCaixa},
   {id:"precificacao",icon:"🏷️",label:"Precificação",render:renderPrecificacao},
+  {id:"custos",icon:"📒",label:"Custos fixos/variáveis",render:renderCustos},
   {id:"dre",icon:"📈",label:"DRE (resultado)",render:renderDRE},
   {id:"config",icon:"⚙️",label:"Configuração",render:renderConfig},
 ];
@@ -509,11 +541,22 @@ function precAbaProdutos(c){
       <button class="btn" style="margin-top:12px" onclick="addProduto()">Adicionar produto</button>
     </div></div>
     <div class="card" style="margin-top:14px"><div class="hd"><h3>Produtos (${prods.length})</h3></div><div class="bd">
-    ${prods.length? prods.map(pr=>{ const cmv=cmvProduto(pr); const r=precificar(cmv,p,num(pr.precoAtual));
+    ${prods.length? prods.map(pr=>{ const r=resumoProduto(pr); const cmv=r.cmv;
       return `<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center">
-          <div><b>${esc(pr.nome||"—")}</b> <span class="pill">CMV ${reais(cmv)}</span> <span class="pill">Sugerido ${r.precoSugeridoCardapio!=null?reais(r.precoSugeridoCardapio):'—'}</span></div>
+          <div><b>${esc(pr.nome||"—")}</b> <span class="pill">CMV ${reais(cmv)}</span> <span class="pill">Sugerido ${r.sugerido!=null?reais(r.sugerido):'—'}</span></div>
           <button class="btn ghost sm" onclick="removerProduto('${pr._id}')">excluir produto</button>
+        </div>
+        <div class="hr"></div>
+        <div class="small muted" style="margin-bottom:6px">Resumo da precificação</div>
+        <div class="resumo">
+          <div class="rz"><span>Custo de Produtos (CMV)</span><b>${reais(r.cmv)}${r.cmvPct!=null?' · '+pct(r.cmvPct):''}</b></div>
+          <div class="rz"><span>Custo Fixo + Variável</span><b class="neg">${r.cfcvValor!=null?reais(r.cfcvValor):'—'} · ${pct(r.pctCFCV)}</b></div>
+          <div class="rz"><span>Preço atual de venda</span><span><input class="precoEdit" inputmode="decimal" value="${pr.precoAtual!=null?String(pr.precoAtual).replace('.',','):''}" placeholder="0,00" onblur="salvarPrecoAtual('${pr._id}',this.value)"></span></div>
+          <div class="rz"><span>Dif. do preço sugerido</span><b>${r.difSugerido!=null?reais(r.difSugerido):'—'}</b></div>
+          <div class="rz"><span>Lucro estimado</span><b class="${(r.lucroValor||0)>=0?'pos':'neg'}">${r.lucroValor!=null?reais(r.lucroValor):'—'}${r.lucroPct!=null?' · '+pct(r.lucroPct):''}</b></div>
+          <div class="rz"><span>Preço sugerido (cardápio)</span><b class="gold">${r.sugerido!=null?reais(r.sugerido):'—'}</b></div>
+          <div class="rz"><span>Preço sugerido (iFood)</span><b class="gold">${r.sugeridoIfood!=null?reais(r.sugeridoIfood):'—'}</b></div>
         </div>
         <div class="hr"></div>
         <div class="small muted" style="margin-bottom:6px">Ficha técnica</div>
@@ -534,6 +577,7 @@ function precAbaProdutos(c){
 }
 function addProduto(){ const nome=val("p_nome"); if(!nome) return toast("Informe o nome do produto."); DB.push("produtos",{nome,precoAtual:num(val("p_preco"))||null,ficha:[]}); toast("Produto adicionado."); }
 function removerProduto(id){ if(confirm("Excluir produto?")){ DB.remove("produtos/"+id); } }
+function salvarPrecoAtual(id,v){ DB.update("produtos/"+id,{precoAtual:num(v)||null}); toast("Preço atualizado."); }
 function addFicha(pid){ const nome=val("fi_nome_"+pid), q=num(val("fi_qtd_"+pid)); if(!nome||q<=0) return toast("Preencha insumo e quantidade."); const pr=STATE.produtos[pid]; const ficha=(pr.ficha||[]).concat([{insumoNome:nome,quantidade:q}]); DB.update("produtos/"+pid,{ficha}); toast("Item adicionado à ficha."); }
 function removerFicha(pid,idx){ const pr=STATE.produtos[pid]; const ficha=(pr.ficha||[]).filter((_,i)=>i!==idx); DB.update("produtos/"+pid,{ficha}); }
 function precAbaParametros(c){
@@ -563,6 +607,53 @@ function salvarParametros(){
   toast("Parâmetros salvos.");
 }
 
+/* ===================== CUSTOS FIXOS E VARIÁVEIS =========================== */
+function renderCustos(el){
+  document.getElementById("pgSub").textContent = "Custos do mês. Os % são calculados sobre o faturamento médio e alimentam a precificação.";
+  const p = STATE.parametros||{};
+  const pr = parametrosResolvidos();
+  const custos = obj2arr(STATE.custos);
+  const fixos = custos.filter(c=>c.tipo==="FIXO");
+  const vars  = custos.filter(c=>c.tipo==="VARIAVEL");
+  const totFixo = fixos.reduce((s,c)=>s+num(c.valor),0);
+  const totVar  = vars.reduce((s,c)=>s+num(c.valor),0);
+  const fat = num(p.faturamentoMedio);
+  const lista = (arr,tipo)=> arr.length? `<table><thead><tr><th>Descrição</th><th>Categoria</th><th class="r">Valor/mês</th><th></th></tr></thead><tbody>${
+      arr.sort((a,b)=>num(b.valor)-num(a.valor)).map(c=>`<tr><td>${esc(c.descricao||"—")}</td><td class="muted">${esc(c.categoria||"—")}</td><td class="r">${reais(c.valor)}</td><td class="r"><button class="btn ghost sm" onclick="removerCusto('${c._id}')">excluir</button></td></tr>`).join("")
+    }</tbody></table>` : `<div class="empty">Nenhum custo ${tipo} lançado.</div>`;
+  el.innerHTML = `
+    <div class="grid g4" style="margin-bottom:14px">
+      <div class="stat"><div class="lbl">Faturamento médio/mês</div><div class="val">${reais(fat)}</div><div class="hint">base dos percentuais</div></div>
+      <div class="stat"><div class="lbl">Total custo fixo</div><div class="val neg">${reais(totFixo)}</div><div class="hint">${pct(pr.percentualCustoFixo)} do faturamento</div></div>
+      <div class="stat"><div class="lbl">Total custo variável</div><div class="val neg">${reais(totVar)}</div><div class="hint">${pct(fat?totVar/fat*100:0)} + imposto ${pct(p.taxaImposto)}</div></div>
+      <div class="stat"><div class="lbl">% Variável (c/ imposto)</div><div class="val">${pct(pr.percentualCustoVariavel)}</div><div class="hint">entra na precificação</div></div>
+    </div>
+    <div class="card"><div class="hd"><h3>Custos fixos</h3><p>Aluguel, salários, contas — não mudam com as vendas.</p></div><div class="bd">
+      <div class="row">
+        <div><label class="f">Descrição</label><input id="cf_desc" placeholder="Ex.: Aluguel"></div>
+        <div><label class="f">Valor/mês (R$)</label><input id="cf_val" inputmode="decimal" placeholder="0,00"></div>
+        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addCusto('FIXO')">+ adicionar</button></div>
+      </div>
+      <div class="hr"></div>${lista(fixos,"fixo")}
+    </div></div>
+    <div class="card" style="margin-top:14px"><div class="hd"><h3>Custos variáveis</h3><p>Taxas de cartão/iFood, entrega, comissões — sobem com as vendas. O imposto fica nos Parâmetros.</p></div><div class="bd">
+      <div class="row">
+        <div><label class="f">Descrição</label><input id="cv_desc" placeholder="Ex.: Taxas iFood"></div>
+        <div><label class="f">Valor/mês (R$)</label><input id="cv_val" inputmode="decimal" placeholder="0,00"></div>
+        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addCusto('VARIAVEL')">+ adicionar</button></div>
+      </div>
+      <div class="hr"></div>${lista(vars,"variável")}
+    </div></div>`;
+}
+function addCusto(tipo){
+  const pre = tipo==="FIXO"?"cf":"cv";
+  const desc=val(pre+"_desc"), valor=num(val(pre+"_val"));
+  if(!desc||valor<=0) return toast("Preencha descrição e valor.");
+  DB.push("custos",{tipo,categoria: tipo==="FIXO"?"GERAIS":"OUTROS",descricao:desc,valor});
+  toast("Custo adicionado.");
+}
+function removerCusto(id){ if(confirm("Excluir este custo?")){ DB.remove("custos/"+id); } }
+
 /* ===================== DRE ================================================= */
 function renderDRE(el){
   const ym=mesAtual();
@@ -587,11 +678,21 @@ function renderDRE(el){
 
 /* ===================== IMPORTAR EXCEL (planilha Delivery Lucrativo) ======== */
 function precAbaImportar(c){
+  const ins=Object.keys(STATE.insumos||{}).length, prod=Object.keys(STATE.produtos||{}).length, cst=Object.keys(STATE.custos||{}).length;
   c.innerHTML = `<div class="card"><div class="hd"><h3>Importar planilha "Delivery Lucrativo"</h3><p>Selecione o arquivo .xlsx. Tudo é lido no seu navegador. Ao importar, a precificação atual é substituída pela da planilha.</p></div><div class="bd">
     <input type="file" id="arq" accept=".xlsx,.xls"/>
     <div id="previa" style="margin-top:14px"></div>
+  </div></div>
+  <div class="card" style="margin-top:14px;border-color:#f3b8b8"><div class="hd"><h3>Apagar dados de precificação</h3><p>Hoje há ${ins} insumo(s), ${prod} produto(s) e ${cst} custo(s). Use isto para limpar uma importação errada e começar do zero. <b>Não afeta o caixa</b> (entradas/saídas).</p></div><div class="bd">
+    <button class="btn red" onclick="limparPrecificacao()">Apagar insumos, produtos e custos</button>
   </div></div>`;
   document.getElementById("arq").addEventListener("change", lerExcel);
+}
+function limparPrecificacao(){
+  if(!confirm("Apagar TODOS os dados de precificação (insumos, produtos e custos)?\nAs entradas e saídas do caixa NÃO são afetadas.")) return;
+  DB.set("insumos",{}); DB.set("produtos",{}); DB.set("custos",{});
+  toast("Dados de precificação apagados. Pode importar de novo.");
+  setTimeout(render,200);
 }
 function lerExcel(ev){
   const file=ev.target.files[0]; if(!file) return;
@@ -622,33 +723,89 @@ function aplicarImport(){
   d.produtos.forEach(p=>p.itens.forEach(it=>{ if(!nomes.has(norm(it.insumoNome))){ nomes.add(norm(it.insumoNome)); extras.push({nome:it.insumoNome,quantidadeCompra:1,unidade:"un",valorCompra:it.valorUnit}); } }));
   const insumosObj={}, produtosObj={}, custosObj={};
   [...d.insumos,...extras].forEach((i,k)=>insumosObj["i"+k]={nome:i.nome,quantidadeCompra:i.quantidadeCompra,unidade:i.unidade||"un",valorCompra:i.valorCompra});
-  d.produtos.forEach((p,k)=>produtosObj["p"+k]={nome:p.nome,precoAtual:p.precoAtual,ficha:p.itens.map(it=>({insumoNome:it.insumoNome,quantidade:it.quantidade,valorUnit:it.valorUnit}))});
+  d.produtos.forEach((p,k)=>produtosObj["p"+k]={nome:p.nome,precoAtual:p.precoAtual,cmvManual:(p.cmvManual!=null?p.cmvManual:null),ficha:(p.itens||[]).map(it=>({insumoNome:it.insumoNome,quantidade:it.quantidade,valorUnit:it.valorUnit}))});
   d.custos.forEach((c2,k)=>custosObj["c"+k]={tipo:c2.tipo,categoria:c2.categoria,descricao:c2.descricao,valor:c2.valor});
   DB.set("insumos",insumosObj); DB.set("produtos",produtosObj); DB.set("custos",custosObj);
-  DB.set("parametros",Object.assign({},STATE.parametros,{faturamentoMedio:d.parametros.faturamentoMedio,lucroDesejado:d.parametros.lucroDesejado,taxaImposto:d.parametros.taxaImposto,taxaIfood:(STATE.parametros&&STATE.parametros.taxaIfood)||23}));
+  DB.set("parametros",Object.assign({},STATE.parametros,{faturamentoMedio:d.parametros.faturamentoMedio,lucroDesejado:d.parametros.lucroDesejado,taxaImposto:d.parametros.taxaImposto,taxaIfood:d.parametros.taxaIfood||(STATE.parametros&&STATE.parametros.taxaIfood)||23}));
   toast("Planilha importada com sucesso!"); abaPrec="precos"; render();
 }
 
 /* ====== PARSER DA PLANILHA (portado de importacaoPlanilha.ts do Audens) ==== */
-const ABAS_OBRIGATORIAS=["PRODUTOS","FICHA TECNICA","BEBIDAS","CUSTOS FIXOS","CUSTOS VARIAVEIS","DADOS"];
+const ABAS_OBRIGATORIAS=["PRODUTOS","CUSTOS FIXOS","CUSTOS VARIAVEIS","DADOS"];
 function _toNum(v){ if(v==null||v==="")return NaN; if(typeof v==="number")return v; return Number(String(v).replace(/\s/g,"").replace(",", ".")); }
 const _cell=(m,r,c)=>(m[r]&&m[r][c]!=null)?m[r][c]:null;
 function _find(m,pred){ for(let r=0;r<m.length;r++){const row=m[r]; if(!row)continue; for(let c=0;c<row.length;c++){ if(pred(norm(row[c])))return{r,c}; }} return null; }
 function _findAll(m,pred){ const o=[]; for(let r=0;r<m.length;r++){const row=m[r]; if(!row)continue; for(let c=0;c<row.length;c++){ if(pred(norm(row[c])))o.push({r,c}); }} return o; }
-function _parseInsumos(m){ const pos=_find(m,n=>n==="ITENS"); if(!pos)return[]; const out=[]; for(let r=pos.r+1;r<m.length;r++){ const nome=String(_cell(m,r,0)??"").trim(); if(!nome)continue; if(norm(nome)==="TOTAL")break; const valorCompra=_toNum(_cell(m,r,2)); if(!Number.isFinite(valorCompra)||valorCompra<=0)continue; const q=_toNum(_cell(m,r,1)); out.push({nome,unidade:"g",quantidadeCompra:Number.isFinite(q)&&q>0?q:1,valorCompra}); } return out; }
+function _parseInsumos(m){
+  const pos=_find(m,n=>n==="ITENS"); if(!pos)return[];
+  const hr=pos.r, nameCol=pos.c, row=m[hr]||[];
+  // Acha as colunas de VALOR e de QUANTIDADE (UNID/GR) pelo cabeçalho — tolera coluna CÓDIGO antes.
+  let valorCol=-1, qtyCol=-1;
+  for(let c=0;c<row.length;c++){ const h=norm(row[c]);
+    if(valorCol<0 && h==="VALOR") valorCol=c;
+    if(qtyCol<0 && (h.includes("UNID")||h.includes("GRAMA")||h==="GR"||h.includes("/GR"))) qtyCol=c;
+  }
+  if(valorCol<0) valorCol=nameCol+3;
+  if(qtyCol<0) qtyCol=nameCol+2;
+  const out=[];
+  for(let r=hr+1;r<m.length;r++){
+    const nome=String(_cell(m,r,nameCol)??"").trim();
+    if(!nome)continue;
+    if(norm(nome)==="TOTAL")break;
+    if(/^\d+([.,]\d+)?$/.test(nome.replace(/\s/g,"")))continue; /* nomes só com número = coluna de código */
+    const valorCompra=_toNum(_cell(m,r,valorCol));
+    if(!Number.isFinite(valorCompra)||valorCompra<=0)continue;
+    const q=_toNum(_cell(m,r,qtyCol));
+    out.push({nome,unidade:"g",quantidadeCompra:Number.isFinite(q)&&q>0?q:1,valorCompra});
+  }
+  return out;
+}
+/* Produtos a partir da aba RELAÇÃO DE PRODUTOS (tabela limpa: Produto, Valor de Venda, CMV...). */
+function _parseProdutosRelacao(m){
+  if(!m) return null;
+  let hr=-1,nameCol=-1,precoCol=-1,cmvCol=-1;
+  for(let r=0;r<Math.min(m.length,15);r++){ const row=m[r]||[]; let nc=-1,pc=-1,cc=-1;
+    for(let c=0;c<row.length;c++){ const h=norm(row[c]);
+      if(nc<0 && (h==="PRODUTOS"||h==="PRODUTO")) nc=c;
+      if(pc<0 && h.includes("VALOR DE VENDA")) pc=c;
+      if(cc<0 && h.includes("CMV")) cc=c;
+    }
+    if(nc>=0 && cc>=0){ hr=r;nameCol=nc;precoCol=pc;cmvCol=cc;break; }
+  }
+  if(hr<0) return null;
+  const out=[];
+  for(let r=hr+1;r<m.length;r++){
+    const nome=String(_cell(m,r,nameCol)??"").trim();
+    if(!nome)continue; if(norm(nome)==="TOTAL")break;
+    const cmv=_toNum(_cell(m,r,cmvCol)); if(!Number.isFinite(cmv))continue;
+    const preco=precoCol>=0?_toNum(_cell(m,r,precoCol)):NaN;
+    out.push({nome,precoAtual:Number.isFinite(preco)&&preco>0?preco:null,cmvManual:cmv,itens:[]});
+  }
+  return out;
+}
 function _parseProdutos(m){ const produtos=[]; for(const {r,c} of _findAll(m,n=>n==="PRODUTO")){ const nb=String(_cell(m,r,c+1)??"").trim(); if(!nb)continue; const nome=norm(nb).startsWith("NOME DO SEU PRODUTO")?("Produto "+((nb.match(/\d+/)||[""])[0])).trim():nb; const itens=[]; for(let rr=r+2;rr<Math.min(m.length,r+2+80);rr++){ const insNome=String(_cell(m,rr,c)??"").trim(); const n=norm(insNome); if(!insNome)break; if(n==="ITEM")continue; if(n.startsWith("RESUMO")||n.startsWith("CUSTO DE PRODUTOS"))break; const quantidade=_toNum(_cell(m,rr,c+2)); const valorUnit=_toNum(_cell(m,rr,c+1)); if(!Number.isFinite(quantidade)||quantidade<=0)continue; itens.push({insumoNome:insNome,quantidade,valorUnit:Number.isFinite(valorUnit)?valorUnit:0}); } let precoAtual=null; for(let rr=r+2;rr<Math.min(m.length,r+45);rr++){ for(let cc=c;cc<=c+3;cc++){ if(norm(_cell(m,rr,cc)).includes("PRECO ATUAL DE VENDA")){ const v=_toNum(_cell(m,rr,c+3)); if(Number.isFinite(v)&&v>0)precoAtual=v; } } } if(itens.length>0)produtos.push({nome,precoAtual,itens}); } return produtos; }
 function _parseBebidas(m){ const pos=_find(m,n=>n==="ITENS"); if(!pos)return[]; const out=[]; for(let r=pos.r+1;r<m.length;r++){ const nome=String(_cell(m,r,0)??"").trim(); if(!nome)continue; if(norm(nome)==="TOTAL")break; const custo=_toNum(_cell(m,r,1)); if(!Number.isFinite(custo)||custo<=0)continue; const pv=_toNum(_cell(m,r,8)); out.push({nome,custo,precoVenda:Number.isFinite(pv)&&pv>0?pv:null}); } return out; }
-const _SEC_FIXAS=[{label:"SALARIOS FREELANCER",nameCol:0,valueCol:4,categoria:"FREELANCER"},{label:"CUSTOS DE FUNCIONAMENTO",nameCol:7,valueCol:8,categoria:"FUNCIONAMENTO"},{label:"LANCHE FUNCIONARIO",nameCol:11,valueCol:12,quantCol:13,categoria:"LANCHE"},{label:"PRO-LABORE",nameCol:11,valueCol:13,categoria:"PRO_LABORE"},{label:"SALARIOS CLT",nameCol:0,valueCol:1,categoria:"CLT"},{label:"CUSTOS GERAIS",nameCol:7,valueCol:8,categoria:"GERAIS"},{label:"MOTOBOYS",nameCol:0,valueCol:4,categoria:"MOTOBOYS"}];
+const _SEC_FIXAS=[{label:"SALARIOS FREELANCER",nameCol:0,valueCol:4,categoria:"FREELANCER"},{label:"CUSTOS DE FUNCIONAMENTO",nameCol:7,valueCol:8,categoria:"FUNCIONAMENTO"},{label:"LANCHE FUNCIONARIO",nameCol:11,valueCol:12,quantCol:13,categoria:"LANCHE"},{label:"PRO-LABORE",nameCol:11,valueCol:13,categoria:"PRO_LABORE"},{label:"SALARIOS CLT",nameCol:0,valueCol:5,categoria:"CLT"},{label:"CUSTOS GERAIS",nameCol:7,valueCol:8,categoria:"GERAIS"},{label:"MOTOBOYS",nameCol:0,valueCol:4,categoria:"MOTOBOYS"}];
 const _SEC_VAR=[{label:"EMPRESTIMOS",nameCol:0,valueCol:1,categoria:"EMPRESTIMOS"},{label:"TAXAS GERAIS",nameCol:3,valueCol:4,categoria:"TAXAS"},{label:"CUSTOS GERAIS",nameCol:6,valueCol:7,categoria:"OUTROS"}];
 function _lerSecao(m,s,tipo){ const pos=_find(m,n=>n===s.label); if(!pos)return[]; const out=[]; for(let r=pos.r+1;r<Math.min(m.length,pos.r+40);r++){ const desc=String(_cell(m,r,s.nameCol)??"").trim(); if(norm(desc)==="TOTAL")break; const vu=_toNum(_cell(m,r,s.valueCol)); const valor=s.quantCol!=null?vu*_toNum(_cell(m,r,s.quantCol)):vu; if(desc&&Number.isFinite(valor)&&valor>0)out.push({tipo,categoria:s.categoria,descricao:desc,valor}); } return out; }
-function _parseParametros(mD,taxaImposto){ let fat=0; const mp=_find(mD,n=>n==="MES"); if(mp){ const vc=mp.c+1; const vals=[]; for(let r=mp.r+1;r<Math.min(mD.length,mp.r+20);r++){ if(norm(_cell(mD,r,mp.c))==="TOTAL")break; const v=_toNum(_cell(mD,r,vc)); if(Number.isFinite(v)&&v>0)vals.push(v); } if(vals.length)fat=vals.reduce((a,b)=>a+b,0)/vals.length; } let lucro=0; const lp=_find(mD,n=>n.includes("LUCRO (%)")); if(lp){ const v=_toNum(_cell(mD,lp.r,lp.c+1)); if(Number.isFinite(v))lucro=v; } return {faturamentoMedio:fat,lucroDesejado:lucro,taxaImposto}; }
+function _parseParametros(mD,taxaImposto){
+  let fat=0; const mp=_find(mD,n=>n==="MES");
+  if(mp){ const vc=mp.c+1; const vals=[]; for(let r=mp.r+1;r<Math.min(mD.length,mp.r+20);r++){ if(norm(_cell(mD,r,mp.c))==="TOTAL")break; const v=_toNum(_cell(mD,r,vc)); if(Number.isFinite(v)&&v>0)vals.push(v); } if(vals.length)fat=vals.reduce((a,b)=>a+b,0)/vals.length; }
+  let lucro=0; const lp=_find(mD,n=>n.includes("LUCRO (%)")); if(lp){ const v=_toNum(_cell(mD,lp.r,lp.c+1)); if(Number.isFinite(v))lucro=v; }
+  let taxaIfood=23; const tp=_find(mD,n=>n.includes("TAXA IFOOD")); if(tp){ const v=_toNum(_cell(mD,tp.r+1,tp.c+1)); if(Number.isFinite(v)&&v>0)taxaIfood=v; }
+  return {faturamentoMedio:fat,lucroDesejado:lucro,taxaImposto,taxaIfood};
+}
 function _parseImposto(mV){ const pos=_find(mV,n=>n.includes("TAXA DE IMPOSTO")); if(!pos)return 0; const v=_toNum(_cell(mV,pos.r,pos.c+1)); return Number.isFinite(v)?v:0; }
 function interpretarPlanilha(getSheet){
   const erros=[],avisos=[];
   const faltando=ABAS_OBRIGATORIAS.filter(a=>!getSheet(a));
   if(faltando.length){ erros.push('A planilha não parece ser a "Delivery Lucrativo": faltam as abas '+faltando.join(", ")+"."); return {ok:false,erros,avisos}; }
   const mProd=getSheet("PRODUTOS"),mFicha=getSheet("FICHA TECNICA"),mBeb=getSheet("BEBIDAS"),mFix=getSheet("CUSTOS FIXOS"),mVar=getSheet("CUSTOS VARIAVEIS"),mDad=getSheet("DADOS");
-  const insumos=_parseInsumos(mProd), produtos=_parseProdutos(mFicha), bebidas=_parseBebidas(mBeb);
+  const insumos=_parseInsumos(mProd);
+  // Produtos: preferimos a aba RELAÇÃO DE PRODUTOS (tabela limpa com CMV pronto); se não houver,
+  // caímos no leitor da FICHA TÉCNICA (template antigo).
+  const produtos=_parseProdutosRelacao(getSheet("RELACAO DE PRODUTOS")) || (mFicha?_parseProdutos(mFicha):[]) || [];
+  const bebidas=mBeb?_parseBebidas(mBeb):[];
   const custos=[..._SEC_FIXAS.flatMap(s=>_lerSecao(mFix,s,"FIXO")),..._SEC_VAR.flatMap(s=>_lerSecao(mVar,s,"VARIAVEL"))];
   const taxaImposto=_parseImposto(mVar); const parametros=_parseParametros(mDad,taxaImposto);
   const nomesInsumo=new Set(insumos.map(i=>norm(i.nome)));
