@@ -12,6 +12,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- Chart.js — gráficos -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <!-- Tipografia Inter -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -142,7 +143,13 @@
   .nav a.active{background:rgba(255,255,255,.10);color:#fff;border-left:3px solid var(--gold);font-weight:600}
   .nav a.active .ico{filter:none}
   .side .foot{font-size:11px;color:#9fb89d}
-  @media(max-width:820px){.side{width:64px}.nav .grp{text-align:center;font-size:8px}}
+  .plano{margin-top:auto;padding:12px}
+  .plano-card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:12px}
+  .plano-t{font-weight:700;font-size:13px;color:#fff}
+  .plano-s{font-size:11px;color:#9fb89d;margin:2px 0 8px}
+  .plano-btn{width:100%;background:var(--gold);color:#3a2b00;border:none;border-radius:8px;padding:8px;font-weight:700;font-size:12px;cursor:pointer}
+  .plano-btn:hover{background:#cf960a}
+  @media(max-width:820px){.side{width:64px}.nav .grp{text-align:center;font-size:8px}.plano-card{display:none}}
 
   /* Topbar executivo */
   .topbar{padding:14px 26px}
@@ -178,6 +185,8 @@
   .alert .at{font-weight:700;font-size:13px} .alert .ad{font-size:12px;color:#555;margin-top:1px}
   .alert.amber{background:#fff8ec;border-color:#f1d695} .alert.red{background:#fdeeee;border-color:#f0b4b4} .alert.green{background:#eef8ec;border-color:#bfe3b6}
   .tagcat{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;background:#eef0ee;color:#475569}
+  .diabadge{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;width:42px;height:42px;border:1px solid var(--line);border-radius:10px;line-height:1}
+  .diabadge b{font-size:15px;color:#1f2937} .diabadge span{font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.5px;margin-top:2px}
   .linkmais{color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:none;font-size:13px}
   .linkmais:hover{text-decoration:underline}
 </style>
@@ -190,7 +199,14 @@
       <b>FC <span>CONTROL</span></b>
     </div>
     <nav class="nav" id="nav"></nav>
-    <div class="foot">Controle Financeiro<br/><span id="modoDados">modo local</span></div>
+    <div class="plano">
+      <div class="plano-card">
+        <div class="plano-t">👑 Plano Profissional</div>
+        <div class="plano-s">Seu plano está ativo.</div>
+        <button class="plano-btn" onclick="irPara('config')">Ver benefícios →</button>
+      </div>
+      <div class="foot" style="margin-top:8px">FC Control · <span id="modoDados">modo local</span></div>
+    </div>
   </aside>
   <main class="main">
     <div class="topbar">
@@ -279,7 +295,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{} };
 
 /* ----------------------------- Utilidades ---------------------------------- */
 const BRL = new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
@@ -381,16 +397,18 @@ const CATEGORIAS_SAIDA = [
   {chave:"MANUTENCAO",grupo:"OPERACIONAL",label:"Manutenção"},
   {chave:"OUTROS_OPERACIONAL",grupo:"OPERACIONAL",label:"Outras despesas"},
 ];
-const catInfo = ch => CATEGORIAS_SAIDA.find(c=>c.chave===ch);
+const catInfo = ch => { const f=CATEGORIAS_SAIDA.find(c=>c.chave===ch); if(f) return f; const cu=STATE.config&&STATE.config.categoriasCustom&&STATE.config.categoriasCustom[ch]; return cu? {chave:ch,label:cu.label,grupo:cu.grupo} : null; };
 const catLabel = ch => (catInfo(ch)?.label) || ch || "—";
 const grupoDe = ch => (catInfo(ch)?.grupo) || "OPERACIONAL";
+function categoriasSaidaTodas(){ const cu=(STATE.config&&STATE.config.categoriasCustom)||{}; return CATEGORIAS_SAIDA.concat(Object.entries(cu).map(([chave,v])=>({chave,label:v.label,grupo:v.grupo}))); }
+function optCategorias(){ return categoriasSaidaTodas().map(c=>`<option value="${c.chave}">${esc(c.label)}</option>`).join(""); }
 const FORMAS = [
   {chave:"DINHEIRO",label:"Dinheiro",taxa:0},{chave:"PIX",label:"Pix",taxa:0},
   {chave:"DEBITO",label:"Débito",taxa:1.5},{chave:"CREDITO",label:"Crédito",taxa:3.2},
   {chave:"VOUCHER",label:"Voucher/Vale",taxa:5},{chave:"IFOOD",label:"iFood",taxa:23},{chave:"NOVENTA_NOVE",label:"99Food",taxa:18},
 ];
 const formaLabel = ch => (FORMAS.find(f=>f.chave===ch)?.label) || ch || "—";
-const formaTaxa = ch => (FORMAS.find(f=>f.chave===ch)?.taxa) || 0;
+const formaTaxa = ch => { const o=STATE.config&&STATE.config.taxasFormas&&STATE.config.taxasFormas[ch]; return (o!=null&&o!=="")? Number(o) : ((FORMAS.find(f=>f.chave===ch)?.taxa)||0); };
 
 /* ----------------------- LOJAS (estabelecimentos) -------------------------
    Cada lançamento tem uma etiqueta `loja`. O webhook do Cardápio Web manda
@@ -434,18 +452,24 @@ const PAGINAS = [
   {id:"entradas",icon:"📥",label:"Entradas",grupo:"MOVIMENTAÇÕES",render:renderEntradas},
   {id:"saidas",icon:"📤",label:"Saídas",grupo:"MOVIMENTAÇÕES",render:renderSaidas},
   {id:"contas",icon:"🧾",label:"Contas a pagar",grupo:"MOVIMENTAÇÕES",render:renderContas},
-  {id:"tarefas",icon:"✅",label:"Tarefas",grupo:"MOVIMENTAÇÕES",render:renderTarefas},
-  {id:"dre",icon:"📈",label:"DRE (resultado)",grupo:"ANÁLISES",render:renderDRE},
+  {id:"receber",icon:"💰",label:"Contas a receber",grupo:"MOVIMENTAÇÕES",render:renderReceber},
+  {id:"dash2",icon:"📊",label:"Dashboard",grupo:"ANÁLISES",render:renderDashboard},
+  {id:"fluxo",icon:"📈",label:"Fluxo de caixa",grupo:"ANÁLISES",render:renderFluxo},
+  {id:"dre",icon:"📑",label:"DRE (resultado)",grupo:"ANÁLISES",render:renderDRE},
   {id:"custos",icon:"📒",label:"Custos fixos/variáveis",grupo:"ANÁLISES",render:renderCustos},
   {id:"precificacao",icon:"🏷️",label:"Precificação",grupo:"ANÁLISES",render:renderPrecificacao},
+  {id:"categorias",icon:"🗂️",label:"Categorias",grupo:"CONFIGURAÇÕES",render:renderCategorias},
+  {id:"formas",icon:"💳",label:"Formas de pagamento",grupo:"CONFIGURAÇÕES",render:renderFormas},
+  {id:"estabelecimentos",icon:"🏪",label:"Estabelecimentos",grupo:"CONFIGURAÇÕES",render:renderEstabelecimentos},
   {id:"config",icon:"⚙️",label:"Configurações",grupo:"CONFIGURAÇÕES",render:renderConfig},
+  {id:"tarefas",icon:"✅",label:"Tarefas",grupo:"",oculto:true,render:renderTarefas},
 ];
 const GRUPOS = ["VISÃO GERAL","MOVIMENTAÇÕES","ANÁLISES","CONFIGURAÇÕES"];
 let paginaAtual = "dashboard";
 function montarNav(){
   let html="";
   for(const g of GRUPOS){
-    const itens = PAGINAS.filter(p=>p.grupo===g);
+    const itens = PAGINAS.filter(p=>p.grupo===g && !p.oculto);
     if(!itens.length) continue;
     html += `<div class="grp">${g}</div>` + itens.map(p=>
       `<a data-id="${p.id}" class="${p.id===paginaAtual?'active':''}" onclick="irPara('${p.id}')"><span class="ico">${p.icon}</span><span class="lbl">${p.label}</span></a>`
@@ -461,12 +485,12 @@ document.addEventListener("click",()=>{ const m=document.getElementById("novaMov
 function render(){
   const pg = PAGINAS.find(p=>p.id===paginaAtual);
   document.getElementById("pgTitulo").textContent = pg.label;
-  const comFiltro = ["dashboard","entradas","saidas","contas","tarefas","dre"].includes(paginaAtual);
+  const comFiltro = ["dashboard","dash2","entradas","saidas","contas","receber","tarefas","dre","fluxo"].includes(paginaAtual);
   const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
       <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
       ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}
     </select></div>`;
-  const selMes = paginaAtual==="dashboard"? `<div class="tbfld"><label>Mês</label><input type="month" value="${mesRef}" onchange="setMesRef(this.value)"></div>` : "";
+  const selMes = (paginaAtual==="dashboard"||paginaAtual==="dash2")? `<div class="tbfld"><label>Mês</label><input type="month" value="${mesRef}" onchange="setMesRef(this.value)"></div>` : "";
   const nm = `<div style="position:relative">
       <button class="btn cta" onclick="toggleNovaMov(event)">+ Nova movimentação</button>
       <div id="novaMovMenu" style="display:none;position:absolute;right:0;top:112%;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 10px 28px rgba(0,0,0,.14);z-index:30;min-width:200px;overflow:hidden">
@@ -475,7 +499,12 @@ function render(){
         <a onclick="irPara('contas')" style="display:block;padding:11px 14px;font-weight:600;cursor:pointer">🧾 Nova conta a pagar</a>
       </div></div>`;
   document.getElementById("topRight").innerHTML = comFiltro ? `<div class="tbctrls">${selLoja}${selMes}${nm}</div>` : "";
-  pg.render(document.getElementById("content"));
+  const content = document.getElementById("content");
+  pg.render(content);
+  // Aviso bem visível quando NÃO está na nuvem (dados ficam só neste navegador e podem sumir).
+  if(!DB.useFb){
+    content.insertAdjacentHTML("afterbegin", `<div class="err" style="margin-bottom:14px">⚠️ <b>Modo local</b> — os dados estão salvos só neste navegador e podem se perder ao trocar de aparelho ou atualizar o arquivo. Para salvar na nuvem (e nunca mais perder), abra o app pelo link do GitHub e confira se aparece <b>"Firebase conectado"</b> no rodapé do menu. Em caso de dúvida, vá em <a class="linkmais" onclick="irPara('config')">Configurações</a>.</div>`);
+  }
 }
 
 /* ===================== AÇÕES (gravam no DB) =============================== */
@@ -536,6 +565,10 @@ function renderDashboard(el){
   const mediaDesp = tres.reduce((a,b)=>a+b,0)/3;
   // margem em pontos
   const margemDelta = m.margem - ant.margem;
+  // texto do banner de evolução
+  const crescTxt = (ant.lucro && isFinite(ant.lucro) && ant.lucro!==0)
+    ? `${m.lucro>=ant.lucro?'cresceu':'caiu'} ${Math.abs((m.lucro-ant.lucro)/Math.abs(ant.lucro)*100).toFixed(1).replace('.',',')}% em relação a ${fmtMesLabel(mesAnteriorYM(ym))}`
+    : `está em ${reais(m.lucro)} neste mês`;
   // alertas
   const alertas=[];
   if(vencidas.length) alertas.push({t:"red",titulo:`${vencidas.length} conta(s) vencida(s)`,desc:`Total ${reais(vencidas.reduce((s,c)=>s+num(c.valor),0))} em atraso.`,acao:"Ver contas",pg:"contas"});
@@ -558,36 +591,48 @@ function renderDashboard(el){
       <div class="kpi"><div class="ic y">🏷️</div><div><div class="kl">Ticket médio</div><div class="kv gold">${reais(m.ticket)}</div><div class="kh">${m.nVendas} venda(s)</div>${trendChip(m.ticket,ant.ticket,true)}</div></div>
     </div>
     <div class="chart-grid" style="margin-top:16px">
-      <div class="card"><div class="hd"><h3>Evolução financeira — últimos 6 meses</h3></div><div class="bd"><div class="chart-box"><canvas id="chFat"></canvas></div></div></div>
+      <div class="card"><div class="hd" style="display:flex;justify-content:space-between;align-items:center"><div><h3>Evolução financeira — últimos 6 meses</h3></div><select style="width:auto;font-size:12px;font-weight:600"><option>Últimos 6 meses</option></select></div><div class="bd">
+        <div style="display:flex;gap:18px;margin-bottom:6px;font-size:12px"><span><span class="dot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#2f8a2c;margin-right:5px"></span>Faturamento (R$)</span><span><span class="dot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#f0a0a0;margin-right:5px"></span>Despesas (R$)</span></div>
+        <div class="chart-box"><canvas id="chFat"></canvas></div>
+        ${(m.recLiq||m.desp)? `<div class="alert ${m.lucro>=0?'green':'amber'}" style="margin-top:12px;margin-bottom:0"><div><div class="ad">${m.lucro>=0?'✅ <b>Excelente!</b>':'⚠️ <b>Atenção.</b>'} Seu lucro operacional ${crescTxt}.</div></div></div>`:""}
+      </div></div>
       <div class="card"><div class="hd"><h3>Despesas por categoria — ${fmtMesLabel(ym)}</h3></div><div class="bd">
         ${cats.length? `<div class="cat-grid"><div class="chart-box sm"><canvas id="chCat"></canvas></div>
           <div class="legend">${cats.slice(0,8).map(([k,v],i)=>`<div class="li"><span class="dot" style="background:${PAL_CAT[i%PAL_CAT.length]}"></span><span class="ln">${esc(k)}</span><span class="lv">${reais(v)}</span><span class="lp">${m.desp?Math.round(v/m.desp*100):0}%</span></div>`).join("")}</div>
-        </div>` : `<div class="empty">Nenhuma despesa confirmada neste mês.</div>`}
+        </div>
+        <div style="margin-top:10px;text-align:right"><a class="linkmais" onclick="irPara('custos')">Ver todas as categorias →</a></div>` : `<div class="empty">Nenhuma despesa confirmada neste mês.</div>`}
       </div></div>
     </div>
     <div class="chart-grid" style="margin-top:16px">
       <div class="card"><div class="hd"><h3>📅 Próximos vencimentos</h3></div><div class="bd">
         ${contasAbertas.length? `<table><thead><tr><th>Vencimento</th><th>Descrição</th><th>Categoria</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
-          contasAbertas.slice(0,5).map(c=>`<tr><td><b>${fmtData(c.vencimento)}</b></td><td>${esc(c.descricao||"—")}</td><td><span class="tagcat">${catLabel(c.categoria)}</span></td><td class="r"><b>${reais(c.valor)}</b></td><td class="r"><button class="btn sm" onclick="pagarConta('${c._id}')">Pagar</button></td></tr>`).join("")
-        }</tbody></table>${contasAbertas.length>5?`<div style="margin-top:8px;text-align:right"><a class="linkmais" onclick="irPara('contas')">Ver todas as contas a pagar →</a></div>`:""}` : `<div class="empty">Nenhuma conta a pagar em aberto. Use <a class="linkmais" onclick="irPara('contas')">Contas a pagar</a> para cadastrar.</div>`}
+          contasAbertas.slice(0,5).map(c=>{const d=(c.vencimento||"").slice(8,10),mn=mesAbrev((c.vencimento||"").slice(5,7));return `<tr><td><span class="diabadge"><b>${d}</b><span>${mn}</span></span></td><td>${esc(c.descricao||"—")}</td><td><span class="tagcat">${catLabel(c.categoria)}</span></td><td class="r"><b>${reais(c.valor)}</b></td><td class="r"><button class="btn sm" onclick="pagarConta('${c._id}')">Pagar</button></td></tr>`;}).join("")
+        }</tbody></table><div style="margin-top:10px;text-align:right"><a class="linkmais" onclick="irPara('contas')">Ver todas as contas a pagar →</a></div>` : `<div class="empty">Nenhuma conta a pagar em aberto. Use <a class="linkmais" onclick="irPara('contas')">Contas a pagar</a> para cadastrar.</div>`}
       </div></div>
       <div class="card"><div class="hd"><h3>🔔 Alertas financeiros</h3></div><div class="bd">
         ${alertas.map(a=>`<div class="alert ${a.t}"><div><div class="at">${esc(a.titulo)}</div><div class="ad">${esc(a.desc)}</div></div>${a.acao?`<button class="btn ghost sm" onclick="irPara('${a.pg}')">${esc(a.acao)}</button>`:""}</div>`).join("")}
+        <div style="margin-top:6px;text-align:right"><a class="linkmais" onclick="irPara('tarefas')">Ver todos os alertas →</a></div>
       </div></div>
     </div>`;
 
   destruirCharts();
-  const G="#2f8a2c",R="#d62828";
+  const G="#2f8a2c";
   if(typeof Chart!=="undefined"){
+    const DL = window.ChartDataLabels || null;
     const elFat=document.getElementById("chFat");
     if(elFat) _charts.push(new Chart(elFat,{data:{labels:meses.map(fmtMesLabel),datasets:[
       {type:"line",label:"Faturamento",data:fatMes,borderColor:G,backgroundColor:G,tension:.35,pointRadius:3,pointBackgroundColor:G,fill:false,order:0},
-      {type:"bar",label:"Despesas",data:despMes,backgroundColor:"rgba(214,40,40,.45)",borderColor:"rgba(214,40,40,.6)",borderRadius:6,order:1}]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{usePointStyle:true,boxWidth:8}}},scales:{y:{grid:{color:"#f0f2f0"},ticks:{callback:v=>"R$ "+Number(v).toLocaleString("pt-BR")}},x:{grid:{display:false}}}}}));
+      {type:"bar",label:"Despesas",data:despMes,backgroundColor:"rgba(240,160,160,.85)",borderRadius:6,maxBarThickness:34,order:1}]},
+      options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:18}},plugins:{legend:{display:false},
+        datalabels:{align:"top",anchor:"end",offset:2,color:(c)=>c.dataset.type==="line"?"#1d6b1b":"#b81f1f",font:{weight:"700",size:10},formatter:v=>v>0?(v/1000).toFixed(1).replace(".",",")+"k":""}},
+        scales:{y:{beginAtZero:true,grid:{color:"#f0f2f0"},ticks:{callback:v=>"R$ "+Number(v).toLocaleString("pt-BR")}},x:{grid:{display:false}}}}, plugins: DL?[DL]:[]}));
     const elCat=document.getElementById("chCat");
-    if(elCat) _charts.push(new Chart(elCat,{type:"doughnut",data:{labels:cats.map(x=>x[0]),datasets:[{data:cats.map(x=>x[1]),backgroundColor:PAL_CAT,borderWidth:2,borderColor:"#fff"}]},options:{responsive:true,maintainAspectRatio:false,cutout:"62%",plugins:{legend:{display:false}}}}));
+    const totalCat=m.desp;
+    const centerText={id:"ct",afterDraw(ch){const a=ch.chartArea;if(!a)return;const cx=(a.left+a.right)/2,cy=(a.top+a.bottom)/2,x=ch.ctx;x.save();x.textAlign="center";x.textBaseline="middle";x.fillStyle="#9aa39a";x.font="600 11px Inter";x.fillText("Total",cx,cy-9);x.fillStyle="#1f2937";x.font="800 14px Inter";x.fillText(reais(totalCat),cx,cy+9);x.restore();}};
+    if(elCat) _charts.push(new Chart(elCat,{type:"doughnut",data:{labels:cats.map(x=>x[0]),datasets:[{data:cats.map(x=>x[1]),backgroundColor:PAL_CAT,borderWidth:2,borderColor:"#fff"}]},options:{responsive:true,maintainAspectRatio:false,cutout:"66%",plugins:{legend:{display:false},datalabels:{display:false}}},plugins:[centerText]}));
   }
 }
+function mesAbrev(mm){ return ["","JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"][Number(mm)]||""; }
 const PAL_CAT=["#2f8a2c","#e8a90c","#d62828","#9333ea","#2563eb","#0891b2","#65a30d","#ea580c","#db2777","#475569"];
 function fmtMesLabel(ym){ const [a,m]=ym.split("-"); const ms=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]; return `${ms[Number(m)-1]}/${a}`; }
 
@@ -646,7 +691,7 @@ function importarFaturamento(){
 }
 function renderSaidas(el){
   document.getElementById("pgSub").textContent = "Pagamentos e gastos. Comprovantes do WhatsApp aparecem aqui para confirmar.";
-  const optCat = CATEGORIAS_SAIDA.map(c=>`<option value="${c.chave}">${c.label}</option>`).join("");
+  const optCat = optCategorias();
   const optLoja = LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(l.nome)}</option>`).join("");
   const fornecedores = [...new Set(obj2arr(STATE.saidas).map(s=>s.fornecedor).filter(Boolean))];
   const pend = obj2arr(STATE.saidas).filter(s=>s.status==="pendente" && daLoja(s)).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
@@ -709,7 +754,7 @@ function venc(iso){
 }
 function renderContas(el){
   document.getElementById("pgSub").textContent = "Cadastre contas com vencimento. Ao marcar como paga, vira uma saída no caixa.";
-  const optCat = CATEGORIAS_SAIDA.map(c=>`<option value="${c.chave}">${c.label}</option>`).join("");
+  const optCat = optCategorias();
   const optLoja = LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(l.nome)}</option>`).join("");
   const fornecedores = [...new Set(obj2arr(STATE.saidas).concat(obj2arr(STATE.contas)).map(s=>s.fornecedor).filter(Boolean))];
   const abertas = obj2arr(STATE.contas).filter(c=>c.status!=="paga" && daLoja(c)).sort((a,b)=>(a.vencimento||"").localeCompare(b.vencimento||""));
@@ -816,6 +861,137 @@ function addTarefa(){
 }
 function alternarTarefa(id,feito){ DB.update("tarefas/"+id,{status:feito?"concluida":"aberta"}); }
 function removerTarefa(id){ DB.remove("tarefas/"+id); }
+
+/* ===================== CONTAS A RECEBER ================================== */
+function renderReceber(el){
+  document.getElementById("pgSub").textContent = "Valores a receber com previsão de data. Ao marcar como recebida, vira uma entrada no caixa.";
+  const optForma = FORMAS.map(f=>`<option value="${f.chave}">${f.label}</option>`).join("");
+  const optLoja = LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("");
+  const abertas = obj2arr(STATE.receber).filter(c=>c.status!=="recebida" && daLoja(c)).sort((a,b)=>(a.vencimento||"").localeCompare(b.vencimento||""));
+  const recebidas = obj2arr(STATE.receber).filter(c=>c.status==="recebida" && daLoja(c)).sort((a,b)=>(b.recebidoEm||0)-(a.recebidoEm||0)).slice(0,20);
+  const total = abertas.reduce((s,c)=>s+num(c.valor),0);
+  el.innerHTML = `
+  <div class="grid g3" style="margin-bottom:14px">
+    <div class="kpi"><div class="ic g">💰</div><div><div class="kl">A receber em aberto</div><div class="kv pos">${reais(total)}</div><div class="kh">${abertas.length} lançamento(s)</div></div></div>
+    <div class="kpi"><div class="ic y">⏰</div><div><div class="kl">Vencem em 7 dias</div><div class="kv">${abertas.filter(c=>{const d=diasAte(c.vencimento);return d>=0&&d<=7;}).length}</div></div></div>
+    <div class="kpi"><div class="ic r">⚠️</div><div><div class="kl">Atrasadas</div><div class="kv">${abertas.filter(c=>diasAte(c.vencimento)<0).length}</div></div></div>
+  </div>
+  <div class="card"><div class="hd"><h3>Nova conta a receber</h3></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Descrição</label><input id="r_desc" placeholder="Ex.: Cliente / evento"></div>
+      <div><label class="f">Valor (R$)</label><input id="r_val" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="f">Previsão</label><input type="date" id="r_venc" value="${hojeISO()}"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Forma</label><select id="r_forma">${optForma}</select></div>
+      <div><label class="f">Estabelecimento</label><select id="r_loja">${optLoja}</select></div>
+      <div><label class="f">Repetir</label><select id="r_rec"><option value="nenhuma">Não repete</option><option value="mensal">Todo mês</option></select></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="addReceber()">Adicionar</button>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Em aberto (${abertas.length})</h3></div><div class="bd">
+    ${abertas.length? `<table><thead><tr><th>Previsão</th><th>Status</th><th>Loja</th><th>Descrição</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
+      abertas.map(c=>{const v=venc(c.vencimento);return `<tr><td>${fmtData(c.vencimento)}</td><td><span class="badge ${v.cls}">${v.txt}</span></td><td><span class="pill">${esc(lojaNome(c.loja))}</span></td><td>${esc(c.descricao||"—")}${c.recorrencia==="mensal"?' <span class="pill">mensal</span>':''}</td><td class="r"><b class="pos">${reais(c.valor)}</b></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="receberConta('${c._id}')">Recebi</button> <button class="btn ghost sm" onclick="removerReceber('${c._id}')">excluir</button></td></tr>`;}).join("")
+    }</tbody></table>` : `<div class="empty">Nenhuma conta a receber em aberto.</div>`}
+  </div></div>
+  ${recebidas.length? `<div class="card" style="margin-top:14px"><div class="hd"><h3>Recebidas recentemente</h3></div><div class="bd"><table><thead><tr><th>Previsão</th><th>Loja</th><th>Descrição</th><th class="r">Valor</th></tr></thead><tbody>${
+    recebidas.map(c=>`<tr><td>${fmtData(c.vencimento)}</td><td><span class="pill">${esc(lojaNome(c.loja))}</span></td><td>${esc(c.descricao||"—")}</td><td class="r">${reais(c.valor)}</td></tr>`).join("")
+  }</tbody></table></div></div>`:""}`;
+}
+function addReceber(){
+  const descricao=val("r_desc"), valor=num(val("r_val")), vencimento=val("r_venc")||hojeISO();
+  if(!descricao||valor<=0) return toast("Preencha descrição e valor.");
+  DB.push("receber",{descricao,valor,vencimento,forma:val("r_forma"),loja:val("r_loja")||lojaPadrao(),recorrencia:val("r_rec")||"nenhuma",status:"aberta",criadoEm:Date.now()});
+  toast("Conta a receber adicionada.");
+}
+function receberConta(id){
+  const c=STATE.receber[id]; if(!c) return;
+  DB.push("caixa/entradas",{data:hojeISO(),valor:num(c.valor),forma:c.forma||"PIX",taxaPerc:formaTaxa(c.forma),descricao:(c.descricao||"Recebimento")+" (conta recebida)",loja:c.loja||lojaPadrao(),origem:"conta_receber",criadoEm:Date.now()});
+  DB.update("receber/"+id,{status:"recebida",recebidoEm:Date.now()});
+  if(c.recorrencia==="mensal"){ DB.push("receber",{descricao:c.descricao,valor:num(c.valor),vencimento:proximoMesISO(c.vencimento),forma:c.forma,loja:c.loja||lojaPadrao(),recorrencia:"mensal",status:"aberta",criadoEm:Date.now()}); }
+  toast("Recebimento lançado no caixa.");
+}
+function removerReceber(id){ if(confirm("Excluir esta conta a receber?")){ DB.remove("receber/"+id); } }
+
+/* ===================== FLUXO DE CAIXA (projeção) ======================== */
+function renderFluxo(el){
+  document.getElementById("pgSub").textContent = "Saldo atual e projeção dos próximos 30 dias (contas a pagar e a receber).";
+  const recLiqTot = obj2arr(STATE.entradas).filter(daLoja).reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
+  const despTot = obj2arr(STATE.saidas).filter(s=>s.status==="confirmado"&&daLoja(s)).reduce((t,s)=>t+num(s.valor),0);
+  const saldo = recLiqTot - despTot;
+  const limite=30;
+  const aPagar = obj2arr(STATE.contas).filter(c=>c.status!=="paga"&&daLoja(c)&&diasAte(c.vencimento)!==null&&diasAte(c.vencimento)<=limite).map(c=>({tipo:"saida",data:c.vencimento,desc:c.descricao,valor:-num(c.valor)}));
+  const aReceber = obj2arr(STATE.receber).filter(c=>c.status!=="recebida"&&daLoja(c)&&diasAte(c.vencimento)!==null&&diasAte(c.vencimento)<=limite).map(c=>({tipo:"entrada",data:c.vencimento,desc:c.descricao,valor:num(c.valor)}));
+  const mov=[...aReceber,...aPagar].sort((a,b)=>(a.data||"").localeCompare(b.data||""));
+  const totReceber=aReceber.reduce((s,m)=>s+m.valor,0), totPagar=aPagar.reduce((s,m)=>s+m.valor,0);
+  const projetado=saldo+totReceber+totPagar;
+  let acum=saldo;
+  el.innerHTML = `
+  <div class="grid g4">
+    <div class="kpi"><div class="ic b">🏦</div><div><div class="kl">Saldo atual</div><div class="kv">${reais(saldo)}</div><div class="kh">entradas líq. − saídas</div></div></div>
+    <div class="kpi"><div class="ic g">📥</div><div><div class="kl">A receber (30d)</div><div class="kv pos">${reais(totReceber)}</div></div></div>
+    <div class="kpi"><div class="ic r">📤</div><div><div class="kl">A pagar (30d)</div><div class="kv neg">${reais(Math.abs(totPagar))}</div></div></div>
+    <div class="kpi"><div class="ic ${projetado>=0?'g':'r'}">📈</div><div><div class="kl">Saldo projetado</div><div class="kv ${projetado>=0?'pos':'neg'}">${reais(projetado)}</div><div class="kh">em 30 dias</div></div></div>
+  </div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Movimentos previstos (30 dias)</h3></div><div class="bd">
+    ${mov.length? `<table><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th class="r">Valor</th><th class="r">Saldo</th></tr></thead><tbody>${
+      mov.map(mm=>{acum+=mm.valor;return `<tr><td>${fmtData(mm.data)}</td><td>${esc(mm.desc||"—")}</td><td>${mm.tipo==="entrada"?'<span class="badge b-green">Entrada</span>':'<span class="badge b-red">Saída</span>'}</td><td class="r ${mm.valor>=0?'pos':'neg'}">${reais(mm.valor)}</td><td class="r"><b>${reais(acum)}</b></td></tr>`;}).join("")
+    }</tbody></table>` : `<div class="empty">Sem contas a pagar ou receber nos próximos 30 dias. Cadastre em <a class="linkmais" onclick="irPara('contas')">Contas a pagar</a> ou <a class="linkmais" onclick="irPara('receber')">Contas a receber</a>.</div>`}
+  </div></div>`;
+}
+
+/* ===================== CATEGORIAS ======================================= */
+function renderCategorias(el){
+  document.getElementById("pgSub").textContent = "Categorias de saída. As fixas vêm prontas; você pode criar as suas.";
+  const custom = STATE.config&&STATE.config.categoriasCustom? STATE.config.categoriasCustom : {};
+  const lista = (grupo)=> CATEGORIAS_SAIDA.filter(c=>c.grupo===grupo).map(c=>`<span class="tagcat" style="margin:3px">${esc(c.label)}</span>`).join("");
+  const customArr = Object.entries(custom).map(([chave,v])=>({chave,...v}));
+  el.innerHTML = `
+  <div class="card"><div class="hd"><h3>Categorias de Produção</h3><p>Ligadas ao produto (viram CMV no DRE).</p></div><div class="bd">${lista("PRODUCAO")||'<span class="muted">—</span>'}</div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Categorias Operacionais</h3><p>Estrutura do negócio.</p></div><div class="bd">${lista("OPERACIONAL")||'<span class="muted">—</span>'}</div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Suas categorias (personalizadas)</h3></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Nome da categoria</label><input id="cat_nome" placeholder="Ex.: Software"></div>
+      <div><label class="f">Grupo</label><select id="cat_grupo"><option value="OPERACIONAL">Operacional</option><option value="PRODUCAO">Produção</option></select></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addCategoria()">Adicionar</button></div>
+    </div>
+    <div class="hr"></div>
+    ${customArr.length? `<table><thead><tr><th>Categoria</th><th>Grupo</th><th></th></tr></thead><tbody>${
+      customArr.map(c=>`<tr><td>${esc(c.label)}</td><td class="muted">${c.grupo==="PRODUCAO"?"Produção":"Operacional"}</td><td class="r"><button class="btn ghost sm" onclick="removerCategoria('${c.chave}')">excluir</button></td></tr>`).join("")
+    }</tbody></table>` : `<div class="empty">Nenhuma categoria personalizada ainda.</div>`}
+  </div></div>`;
+}
+function addCategoria(){
+  const nome=val("cat_nome"); if(!nome) return toast("Informe o nome.");
+  const chave="CUSTOM_"+norm(nome).replace(/[^A-Z0-9]+/g,"_").replace(/^_|_$/g,"");
+  const custom=Object.assign({}, (STATE.config&&STATE.config.categoriasCustom)||{});
+  custom[chave]={label:nome.trim(),grupo:val("cat_grupo")==="PRODUCAO"?"PRODUCAO":"OPERACIONAL"};
+  DB.update("config",{categoriasCustom:custom}); toast("Categoria criada.");
+}
+function removerCategoria(chave){
+  const custom=Object.assign({}, (STATE.config&&STATE.config.categoriasCustom)||{}); delete custom[chave];
+  DB.update("config",{categoriasCustom:custom}); toast("Categoria removida.");
+}
+
+/* ===================== FORMAS DE PAGAMENTO ============================== */
+function renderFormas(el){
+  document.getElementById("pgSub").textContent = "Ajuste a taxa de cada forma de pagamento. A taxa é descontada das entradas.";
+  el.innerHTML = `<div class="card"><div class="hd"><h3>Formas de pagamento e taxas</h3><p>Edite o % de taxa; o líquido das entradas é calculado com base nele.</p></div><div class="bd">
+    <table><thead><tr><th>Forma</th><th class="r">Taxa (%)</th></tr></thead><tbody>${
+      FORMAS.map(f=>`<tr><td>${f.label}</td><td class="r"><input class="precoEdit" inputmode="decimal" value="${String(formaTaxa(f.chave)).replace('.',',')}" onblur="salvarTaxaForma('${f.chave}',this.value)"></td></tr>`).join("")
+    }</tbody></table>
+  </div></div>`;
+}
+function salvarTaxaForma(chave,v){
+  const taxas=Object.assign({}, (STATE.config&&STATE.config.taxasFormas)||{}); taxas[chave]=num(v);
+  DB.update("config",{taxasFormas:taxas}); toast("Taxa salva.");
+}
+
+/* ===================== ESTABELECIMENTOS ================================= */
+function renderEstabelecimentos(el){
+  document.getElementById("pgSub").textContent = "Nome e logo de cada estabelecimento e a logo do painel.";
+  el.innerHTML = identidadeVisualHTML();
+}
 
 /* ===================== PRECIFICAÇÃO ======================================= */
 let abaPrec = "precos";
@@ -1220,7 +1396,16 @@ function renderConfig(el){
     </div>
     <div class="small muted" style="margin-top:10px">Status: <b>${DB.useFb?"Firebase conectado":"modo local"}</b></div>
   </div></div>
-  <div class="card" style="margin-top:14px"><div class="hd"><h3>Identidade visual</h3><p>Suba a logo do painel e a de cada estabelecimento (PNG/JPG, de preferência quadrada). Elas aparecem na barra e no Dashboard.</p></div><div class="bd">
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Identidade visual</h3></div><div class="bd small">
+    As logos do painel e dos estabelecimentos agora ficam em <a class="linkmais" onclick="irPara('estabelecimentos')">Estabelecimentos</a>.
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Como o WhatsApp entra aqui</h3></div><div class="bd small">
+    A função do comprovante (pasta <code>funcao-comprovante</code>) recebe a foto/PDF do grupo via Z-API, lê com IA e grava em <code>caixa/saidas</code> com status <b>pendente</b>. Eles aparecem em Saídas para você confirmar. Veja o passo a passo no arquivo <b>GUIA.md</b>.
+  </div></div>`;
+}
+// HTML da seção de identidade visual (usada na página Estabelecimentos).
+function identidadeVisualHTML(){
+  return `<div class="card"><div class="hd"><h3>Identidade visual</h3><p>Suba a logo do painel e a de cada estabelecimento (PNG/JPG, de preferência quadrada). Elas aparecem na barra e no Dashboard.</p></div><div class="bd">
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px"><input type="checkbox" id="remFundo" checked style="width:auto"> Remover fundo branco ao subir (recomendado — deixa a logo sem o quadrado branco)</label>
     <div class="secao-titulo">Logo do painel</div>
     <div class="row" style="align-items:center">
@@ -1236,9 +1421,6 @@ function renderConfig(el){
       <div><label class="f">Logo</label><input type="file" accept="image/*" onchange="subirLogo(this,'${l.id}')"></div>
       ${lojaLogo(l.id)?`<div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="removerLogo('${l.id}')">remover</button></div>`:""}
     </div>`).join("")}
-  </div></div>
-  <div class="card" style="margin-top:14px"><div class="hd"><h3>Como o WhatsApp entra aqui</h3></div><div class="bd small">
-    A função do comprovante (pasta <code>funcao-comprovante</code>) recebe a foto/PDF do grupo via Z-API, lê com IA e grava em <code>caixa/saidas</code> com status <b>pendente</b>. Eles aparecem em Saídas para você confirmar. Veja o passo a passo no arquivo <b>GUIA.md</b>.
   </div></div>`;
 }
 // Lê a imagem como dataURL e guarda no Firebase (sem precisar de Storage). Reduz a imagem antes.
@@ -1323,6 +1505,7 @@ function boot(){
   bind("caixa/entradas","entradas");
   bind("custos","custos");
   bind("contas","contas");
+  bind("receber","receber");
   bind("tarefas","tarefas");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); render(); });
