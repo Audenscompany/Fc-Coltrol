@@ -10,6 +10,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <!-- SheetJS — importar planilha Excel direto no navegador -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Chart.js — gráficos -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
     --green:#2f8a2c; --green-d:#246e22; --green-l:#3a9a34;
@@ -96,13 +98,40 @@
   .warn{background:#fff7e6;border:1px solid #f3d99b;color:#7a5a00;padding:10px 12px;border-radius:10px;font-size:13px}
   .ok{background:#e9f7e7;border:1px solid #b6e0b0;color:#246e22;padding:10px 12px;border-radius:10px;font-size:13px}
   .err{background:#fdeaea;border:1px solid #f3b8b8;color:#9b1c1c;padding:10px 12px;border-radius:10px;font-size:13px}
+
+  /* ---- v2: visual mais profissional ---- */
+  body{background:#eef1ee}
+  .content{max-width:1180px}
+  .topbar{box-shadow:0 1px 0 rgba(0,0,0,.04)}
+  .card{border-radius:16px;border-color:#e9ece9}
+  .stat{border-radius:16px;position:relative;overflow:hidden;border-color:#e9ece9}
+  .stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--green)}
+  .stat.neg::before{background:var(--red)} .stat.gold::before{background:var(--gold)} .stat.blue::before{background:#2563eb}
+  .stat .val{font-size:26px;letter-spacing:-.5px}
+  /* Cartões de empresa (Dashboard) */
+  .empresas{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .empresa{display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px solid #e3e6e3;background:#fff;border-radius:14px;cursor:pointer;box-shadow:var(--shadow);transition:.15s;min-width:190px}
+  .empresa:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.08)}
+  .empresa.ativa{border-color:var(--green);box-shadow:0 0 0 2px rgba(47,138,44,.18)}
+  .empresa img,.empresa .ph{width:44px;height:44px;border-radius:11px;object-fit:cover;background:#f0f2f0;display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--green-d)}
+  .empresa .en{font-weight:700} .empresa .es{font-size:11px;color:var(--muted)}
+  /* Gráficos */
+  .chart-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:14px}
+  @media(max-width:900px){.chart-grid{grid-template-columns:1fr}}
+  .chart-box{position:relative;height:280px}
+  .chart-box.sm{height:240px}
+  /* Logo do painel na barra lateral */
+  .brand img{object-fit:contain}
+  .secao-titulo{font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:18px 2px 8px}
+  input[type=file]{font-size:13px}
+  .logo-prev{width:54px;height:54px;border-radius:12px;object-fit:cover;border:1px solid var(--line);background:#fff;vertical-align:middle}
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="side">
     <div class="brand">
-      <img src="logo.svg" alt="FC Control" onerror="this.src='logo.png'"/>
+      <img id="brandLogo" src="logo.svg" alt="FC Control" onerror="this.src='logo.png'"/>
       <b>FC <span>CONTROL</span></b>
     </div>
     <nav class="nav" id="nav"></nav>
@@ -195,7 +224,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{} };
 
 /* ----------------------------- Utilidades ---------------------------------- */
 const BRL = new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
@@ -316,7 +345,11 @@ const LOJAS = [
   {id:"burguer", nome:"Burguer FC"},
   {id:"pizza",   nome:"Pizza FC"},
 ];
-const lojaNome = id => (LOJAS.find(l=>l.id===id)?.nome) || (id||"—");
+function aplicarPainelLogo(){ const img=document.getElementById("brandLogo"); if(img && STATE.config && STATE.config.painelLogo) img.src=STATE.config.painelLogo; }
+const lojaCfg = id => (STATE.config && STATE.config.lojas && STATE.config.lojas[id]) || {};
+const lojaNome = id => lojaCfg(id).nome || (LOJAS.find(l=>l.id===id)?.nome) || (id||"—");
+const lojaLogo = id => lojaCfg(id).logo || "";
+const painelLogo = () => (STATE.config && STATE.config.painelLogo) || "logo.svg";
 let lojaFiltro = localStorage.getItem("fc_loja_filtro") || "todos";
 function setLojaFiltro(v){ lojaFiltro=v; localStorage.setItem("fc_loja_filtro",v); render(); }
 const daLoja = m => lojaFiltro==="todos" || (m.loja||"")===lojaFiltro;
@@ -393,6 +426,14 @@ function removerMov(tipo,id){ if(confirm("Excluir este lançamento?")){ DB.remov
 const val = id => { const e=document.getElementById(id); return e? e.value.trim() : ""; };
 
 /* ===================== DASHBOARD =========================================== */
+let _charts=[];
+function destruirCharts(){ _charts.forEach(c=>{try{c.destroy();}catch(e){}}); _charts=[]; }
+function mesesAtras(n){ const arr=[]; const d=new Date(hojeISO()+"T00:00:00"); d.setDate(1);
+  for(let i=n-1;i>=0;i--){ const x=new Date(d); x.setMonth(x.getMonth()-i); arr.push(x.toISOString().slice(0,7)); } return arr; }
+function empresaCard(id,nome,logo,ativa){
+  const ico = id==="todos" ? `<span class="ph">★</span>` : (logo? `<img src="${logo}" alt="">` : `<span class="ph">${esc((nome||"?").slice(0,2).toUpperCase())}</span>`);
+  return `<div class="empresa ${ativa?'ativa':''}" onclick="setLojaFiltro('${id}')">${ico}<div><div class="en">${esc(nome)}</div><div class="es">${id==='todos'?'visão geral':'ver só esta loja'}</div></div></div>`;
+}
 function renderDashboard(el){
   document.getElementById("pgSub").textContent = "Visão do mês de "+fmtMesLabel(mesAtual());
   const ym=mesAtual();
@@ -403,26 +444,57 @@ function renderDashboard(el){
   const recLiq = ent.reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
   const desp = sai.reduce((t,s)=>t+num(s.valor),0);
   const lucro = recLiq-desp;
-  const porCat = {};
-  sai.forEach(s=>{ const k=catLabel(s.categoria); porCat[k]=(porCat[k]||0)+num(s.valor); });
+  const ticket = ent.length? recBruta/ent.length : 0;
+  const porCat = {}; sai.forEach(s=>{ const k=catLabel(s.categoria); porCat[k]=(porCat[k]||0)+num(s.valor); });
   const cats = Object.entries(porCat).sort((a,b)=>b[1]-a[1]);
+  const porForma = {}; ent.forEach(e=>{ const k=formaLabel(e.forma); porForma[k]=(porForma[k]||0)+num(e.valor); });
   const contasAbertas = obj2arr(STATE.contas).filter(c=>c.status!=="paga" && daLoja(c));
   const vencidas = contasAbertas.filter(c=>diasAte(c.vencimento)<0).length;
   const proximas = contasAbertas.filter(c=>{const d=diasAte(c.vencimento);return d>=0&&d<=7;}).length;
+  // séries de 6 meses
+  const meses = mesesAtras(6);
+  const fatMes = meses.map(m=>obj2arr(STATE.entradas).filter(e=>noMes(e.data,m)&&daLoja(e)).reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0));
+  const despMes = meses.map(m=>obj2arr(STATE.saidas).filter(s=>noMes(s.data,m)&&s.status==="confirmado"&&daLoja(s)).reduce((t,s)=>t+num(s.valor),0));
+
   el.innerHTML = `
-    ${pend.length? `<div class="warn" style="margin-bottom:14px">📲 Você tem <b>${pend.length}</b> comprovante(s) do WhatsApp aguardando confirmação. <a onclick="irPara('saidas')" style="color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:underline">Ver em Saídas →</a></div>`:""}
+    <div class="empresas">
+      ${empresaCard("todos","Todos","",lojaFiltro==="todos")}
+      ${LOJAS.map(l=>empresaCard(l.id,lojaNome(l.id),lojaLogo(l.id),lojaFiltro===l.id)).join("")}
+    </div>
+    ${pend.length? `<div class="warn" style="margin-bottom:14px">📲 <b>${pend.length}</b> comprovante(s) do WhatsApp aguardando confirmação. <a onclick="irPara('saidas')" style="color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:underline">Ver em Saídas →</a></div>`:""}
     ${(vencidas||proximas)? `<div class="warn" style="margin-bottom:14px">🔔 ${vencidas?`<b>${vencidas}</b> conta(s) vencida(s)`:""}${vencidas&&proximas?" e ":""}${proximas?`<b>${proximas}</b> vencem em até 7 dias`:""}. <a onclick="irPara('tarefas')" style="color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:underline">Ver em Tarefas →</a></div>`:""}
     <div class="grid g4">
       <div class="stat"><div class="lbl">Receita líquida</div><div class="val pos">${reais(recLiq)}</div><div class="hint">Bruto ${reais(recBruta)} − taxas</div></div>
-      <div class="stat"><div class="lbl">Despesas</div><div class="val neg">${reais(desp)}</div><div class="hint">${sai.length} lançamento(s)</div></div>
-      <div class="stat"><div class="lbl">Lucro estimado</div><div class="val ${lucro>=0?'pos':'neg'}">${reais(lucro)}</div><div class="hint">Receita líq. − despesas</div></div>
-      <div class="stat"><div class="lbl">Margem</div><div class="val">${recLiq>0?pct(lucro/recLiq*100):'—'}</div><div class="hint">do que entra, quanto sobra</div></div>
+      <div class="stat neg"><div class="lbl">Despesas</div><div class="val neg">${reais(desp)}</div><div class="hint">${sai.length} lançamento(s)</div></div>
+      <div class="stat ${lucro>=0?'':'neg'}"><div class="lbl">Lucro estimado</div><div class="val ${lucro>=0?'pos':'neg'}">${reais(lucro)}</div><div class="hint">Receita líq. − despesas</div></div>
+      <div class="stat blue"><div class="lbl">Margem</div><div class="val">${recLiq>0?pct(lucro/recLiq*100):'—'}</div><div class="hint">Ticket médio ${reais(ticket)}</div></div>
     </div>
-    <div class="card" style="margin-top:14px"><div class="hd"><h3>Despesas por categoria — ${fmtMesLabel(ym)}</h3></div><div class="bd">
-      ${cats.length? `<table><thead><tr><th>Categoria</th><th class="r">Valor</th><th class="r">%</th></tr></thead><tbody>${
-        cats.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="r">${reais(v)}</td><td class="r muted">${desp?Math.round(v/desp*100):0}%</td></tr>`).join("")
-      }</tbody></table>` : `<div class="empty">Nenhuma despesa confirmada neste mês.</div>`}
-    </div></div>`;
+    <div class="chart-grid" style="margin-top:14px">
+      <div class="card"><div class="hd"><h3>Faturamento × Despesas (6 meses)</h3></div><div class="bd"><div class="chart-box"><canvas id="chFat"></canvas></div></div></div>
+      <div class="card"><div class="hd"><h3>Despesas por categoria — ${fmtMesLabel(ym)}</h3></div><div class="bd"><div class="chart-box">${cats.length?'<canvas id="chCat"></canvas>':'<div class="empty">Sem despesas no mês.</div>'}</div></div></div>
+    </div>
+    <div class="chart-grid" style="margin-top:14px">
+      <div class="card"><div class="hd"><h3>Entradas por forma de pagamento — ${fmtMesLabel(ym)}</h3></div><div class="bd"><div class="chart-box sm">${Object.keys(porForma).length?'<canvas id="chForma"></canvas>':'<div class="empty">Sem entradas no mês.</div>'}</div></div></div>
+      <div class="card"><div class="hd"><h3>Detalhe das despesas</h3></div><div class="bd">
+        ${cats.length? `<table><thead><tr><th>Categoria</th><th class="r">Valor</th><th class="r">%</th></tr></thead><tbody>${
+          cats.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="r">${reais(v)}</td><td class="r muted">${desp?Math.round(v/desp*100):0}%</td></tr>`).join("")
+        }</tbody></table>` : `<div class="empty">Nenhuma despesa confirmada neste mês.</div>`}
+      </div></div>
+    </div>`;
+
+  destruirCharts();
+  const G="#2f8a2c",R="#d62828",GD="#e8a90c",PAL=[R,GD,G,"#2563eb","#9333ea","#0891b2","#db2777","#65a30d","#ea580c","#475569","#0d9488","#7c3aed"];
+  if(typeof Chart!=="undefined"){
+    const elFat=document.getElementById("chFat");
+    if(elFat) _charts.push(new Chart(elFat,{type:"bar",data:{labels:meses.map(fmtMesLabel),datasets:[
+      {label:"Faturamento",data:fatMes,backgroundColor:G,borderRadius:6},
+      {label:"Despesas",data:despMes,backgroundColor:R,borderRadius:6}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom"}},scales:{y:{ticks:{callback:v=>"R$ "+Number(v).toLocaleString("pt-BR")}}}}}));
+    const elCat=document.getElementById("chCat");
+    if(elCat) _charts.push(new Chart(elCat,{type:"doughnut",data:{labels:cats.map(x=>x[0]),datasets:[{data:cats.map(x=>x[1]),backgroundColor:PAL}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"right"}}}}));
+    const elForma=document.getElementById("chForma");
+    if(elForma) _charts.push(new Chart(elForma,{type:"doughnut",data:{labels:Object.keys(porForma),datasets:[{data:Object.values(porForma),backgroundColor:[G,GD,"#2563eb",R,"#9333ea","#0891b2","#ea580c"]}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"right"}}}}));
+  }
 }
 function fmtMesLabel(ym){ const [a,m]=ym.split("-"); const ms=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]; return `${ms[Number(m)-1]}/${a}`; }
 
@@ -445,6 +517,19 @@ function renderEntradas(el){
       <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addEntrada()">Lançar entrada</button></div>
     </div>
   </div></div>
+
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Importar faturamento de meses anteriores</h3><p>Lance o faturamento de um mês inteiro por forma de pagamento (sem precisar de pedido a pedido). Escolha o mês e o estabelecimento e preencha os totais.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Mês</label><input type="month" id="fat_mes" value="${mesAtual()}"></div>
+      <div><label class="f">Estabelecimento</label><select id="fat_loja">${optLoja}</select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      ${FORMAS.map(f=>`<div><label class="f">${f.label}</label><input id="fat_${f.chave}" inputmode="decimal" placeholder="0,00"></div>`).join("")}
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="importarFaturamento()">Lançar faturamento do mês</button>
+    <div class="small muted" style="margin-top:8px">Cada forma com valor vira uma entrada datada no fim do mês escolhido. Repita para cada mês/estabelecimento.</div>
+  </div></div>
+
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Entradas (${ent.length})</h3></div><div class="bd">
     ${ent.length? tabela(["Data","Loja","Forma","Bruto","Taxa","Líquido","Descrição",""], ent.map(e=>[
       fmtData(e.data), `<span class="pill">${esc(lojaNome(e.loja))}</span>`, formaLabel(e.forma), reais(e.valor), pct(e.taxaPerc),
@@ -454,6 +539,18 @@ function renderEntradas(el){
   </div></div>`;
 }
 
+function ultimoDiaMes(ym){ const [a,m]=ym.split("-").map(Number); return `${ym}-${String(new Date(a,m,0).getDate()).padStart(2,"0")}`; }
+function importarFaturamento(){
+  const ym=val("fat_mes"); if(!/^\d{4}-\d{2}$/.test(ym)) return toast("Escolha o mês.");
+  const loja=val("fat_loja")||lojaPadrao(); const data=ultimoDiaMes(ym);
+  let n=0;
+  for(const f of FORMAS){ const v=num(val("fat_"+f.chave)); if(v>0){
+    DB.push("caixa/entradas",{data,valor:v,forma:f.chave,taxaPerc:f.taxa,descricao:`Faturamento ${fmtMesLabel(ym)} (importado)`,loja,origem:"importado",criadoEm:Date.now()});
+    n++;
+  }}
+  if(n===0) return toast("Preencha pelo menos uma forma de pagamento.");
+  toast(`Faturamento de ${fmtMesLabel(ym)} lançado (${n} forma(s)).`);
+}
 function renderSaidas(el){
   document.getElementById("pgSub").textContent = "Pagamentos e gastos. Comprovantes do WhatsApp aparecem aqui para confirmar.";
   const optCat = CATEGORIAS_SAIDA.map(c=>`<option value="${c.chave}">${c.label}</option>`).join("");
@@ -715,10 +812,14 @@ function precAbaProdutos(c){
           <div class="rz"><span>Preço sugerido (iFood)</span><b class="gold">${r.sugeridoIfood!=null?reais(r.sugeridoIfood):'—'}</b></div>
         </div>
         <div class="hr"></div>
-        <div class="small muted" style="margin-bottom:6px">Ficha técnica</div>
-        ${(pr.ficha&&pr.ficha.length)? `<table><thead><tr><th>Insumo</th><th class="r">Qtd</th><th class="r">Custo</th><th></th></tr></thead><tbody>${
+        <div class="small muted" style="margin-bottom:6px">Ficha técnica (edite a quantidade e o custo unitário; o total recalcula sozinho)</div>
+        ${(pr.ficha&&pr.ficha.length)? `<table><thead><tr><th>Insumo</th><th class="r">Qtd</th><th class="r">Custo unit.</th><th class="r">Total</th><th></th></tr></thead><tbody>${
           pr.ficha.map((it,idx)=>{ const ins=it.insumoNome?insumoPorNome(it.insumoNome):null; const cu=ins?custoUnitario(ins):num(it.valorUnit);
-            return `<tr><td>${esc(it.insumoNome||(ins&&ins.nome)||"—")}</td><td class="r">${num(it.quantidade)}</td><td class="r">${reais(cu*num(it.quantidade))}</td><td class="r"><button class="btn ghost sm" onclick="removerFicha('${pr._id}',${idx})">×</button></td></tr>`;
+            return `<tr><td>${esc(it.insumoNome||(ins&&ins.nome)||"—")}</td>
+              <td class="r"><input class="precoEdit" style="width:80px" inputmode="decimal" value="${String(num(it.quantidade)).replace('.',',')}" onblur="editarFicha('${pr._id}',${idx},'quantidade',this.value)"></td>
+              <td class="r">${ins? `<span class="muted" title="vem do cadastro do insumo">${reais(cu)}</span>` : `<input class="precoEdit" style="width:90px" inputmode="decimal" value="${String(num(it.valorUnit)).replace('.',',')}" onblur="editarFicha('${pr._id}',${idx},'valorUnit',this.value)">`}</td>
+              <td class="r">${reais(cu*num(it.quantidade))}</td>
+              <td class="r"><button class="btn ghost sm" onclick="removerFicha('${pr._id}',${idx})">×</button></td></tr>`;
           }).join("")
         }</tbody></table>` : `<div class="empty">Sem itens na ficha.</div>`}
         <div class="row" style="margin-top:10px">
@@ -736,6 +837,11 @@ function removerProduto(id){ if(confirm("Excluir produto?")){ DB.remove("produto
 function salvarPrecoAtual(id,v){ DB.update("produtos/"+id,{precoAtual:num(v)||null}); toast("Preço atualizado."); }
 function addFicha(pid){ const nome=val("fi_nome_"+pid), q=num(val("fi_qtd_"+pid)); if(!nome||q<=0) return toast("Preencha insumo e quantidade."); const pr=STATE.produtos[pid]; const ficha=(pr.ficha||[]).concat([{insumoNome:nome,quantidade:q}]); DB.update("produtos/"+pid,{ficha}); toast("Item adicionado à ficha."); }
 function removerFicha(pid,idx){ const pr=STATE.produtos[pid]; const ficha=(pr.ficha||[]).filter((_,i)=>i!==idx); DB.update("produtos/"+pid,{ficha}); }
+function editarFicha(pid,idx,campo,valor){
+  const pr=STATE.produtos[pid]; if(!pr||!pr.ficha||!pr.ficha[idx]) return;
+  const ficha=pr.ficha.map((it,i)=> i===idx? Object.assign({},it,{[campo]:num(valor)}) : it);
+  DB.update("produtos/"+pid,{ficha}); toast("Ficha atualizada.");
+}
 function precAbaParametros(c){
   const p=STATE.parametros||{};
   c.innerHTML = `<div class="card"><div class="hd"><h3>Parâmetros de precificação</h3><p>Faturamento médio do mês, lucro desejado, imposto e taxa do iFood. Os % de custo são calculados sozinhos a partir das suas despesas; você pode forçar um % se quiser.</p></div><div class="bd">
@@ -1021,9 +1127,52 @@ function renderConfig(el){
     </div>
     <div class="small muted" style="margin-top:10px">Status: <b>${DB.useFb?"Firebase conectado":"modo local"}</b></div>
   </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Identidade visual</h3><p>Suba a logo do painel e a de cada estabelecimento (PNG/JPG, de preferência quadrada). Elas aparecem na barra e no Dashboard.</p></div><div class="bd">
+    <div class="secao-titulo">Logo do painel</div>
+    <div class="row" style="align-items:center">
+      <div style="flex:0">${STATE.config&&STATE.config.painelLogo?`<img class="logo-prev" src="${STATE.config.painelLogo}">`:`<span class="logo-prev" style="display:inline-flex;align-items:center;justify-content:center;color:#aaa">—</span>`}</div>
+      <div><input type="file" accept="image/*" onchange="subirLogo(this,'painel')"></div>
+      ${STATE.config&&STATE.config.painelLogo?`<div style="flex:0"><button class="btn ghost sm" onclick="removerLogo('painel')">remover</button></div>`:""}
+    </div>
+    ${LOJAS.map(l=>`
+    <div class="secao-titulo">${esc(lojaNome(l.id))}</div>
+    <div class="row" style="align-items:center">
+      <div style="flex:0">${lojaLogo(l.id)?`<img class="logo-prev" src="${lojaLogo(l.id)}">`:`<span class="logo-prev" style="display:inline-flex;align-items:center;justify-content:center;color:#aaa">—</span>`}</div>
+      <div><label class="f">Nome</label><input id="nm_${l.id}" value="${esc(lojaNome(l.id))}" onblur="salvarNomeLoja('${l.id}',this.value)"></div>
+      <div><label class="f">Logo</label><input type="file" accept="image/*" onchange="subirLogo(this,'${l.id}')"></div>
+      ${lojaLogo(l.id)?`<div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="removerLogo('${l.id}')">remover</button></div>`:""}
+    </div>`).join("")}
+  </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Como o WhatsApp entra aqui</h3></div><div class="bd small">
-    A função do comprovante (pasta <code>funcao-comprovante</code>) recebe a foto/PDF do grupo via Z-API, lê com IA e grava em <code>caixa/saidas</code> com status <b>pendente</b>. Eles aparecem no Caixa para você confirmar. Veja o passo a passo no arquivo <b>GUIA.md</b>.
+    A função do comprovante (pasta <code>funcao-comprovante</code>) recebe a foto/PDF do grupo via Z-API, lê com IA e grava em <code>caixa/saidas</code> com status <b>pendente</b>. Eles aparecem em Saídas para você confirmar. Veja o passo a passo no arquivo <b>GUIA.md</b>.
   </div></div>`;
+}
+// Lê a imagem como dataURL e guarda no Firebase (sem precisar de Storage). Reduz a imagem antes.
+function subirLogo(input,alvo){
+  const file=input.files&&input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const img=new Image();
+    img.onload=()=>{
+      const max=256, esc2=Math.min(1,max/Math.max(img.width,img.height));
+      const cv=document.createElement("canvas"); cv.width=Math.round(img.width*esc2); cv.height=Math.round(img.height*esc2);
+      cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);
+      const dataUrl=cv.toDataURL("image/png");
+      if(alvo==="painel"){ DB.update("config",{painelLogo:dataUrl}); }
+      else { const lojas=Object.assign({}, (STATE.config&&STATE.config.lojas)||{}); lojas[alvo]=Object.assign({}, lojas[alvo]||{}, {logo:dataUrl}); DB.update("config",{lojas}); }
+      toast("Logo salva.");
+    };
+    img.src=e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function removerLogo(alvo){
+  if(alvo==="painel"){ DB.update("config",{painelLogo:null}); }
+  else { const lojas=Object.assign({}, (STATE.config&&STATE.config.lojas)||{}); lojas[alvo]=Object.assign({}, lojas[alvo]||{}, {logo:null}); DB.update("config",{lojas}); }
+  toast("Logo removida.");
+}
+function salvarNomeLoja(id,nome){
+  const lojas=Object.assign({}, (STATE.config&&STATE.config.lojas)||{}); lojas[id]=Object.assign({}, lojas[id]||{}, {nome:(nome||"").trim()||null}); DB.update("config",{lojas}); toast("Nome salvo.");
 }
 function salvarFirebase(){
   let txt = val("cfg").trim();
@@ -1059,6 +1208,7 @@ function boot(){
   bind("contas","contas");
   bind("tarefas","tarefas");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; render(); });
+  DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); render(); });
   render();
 }
 window.addEventListener("DOMContentLoaded", boot);
