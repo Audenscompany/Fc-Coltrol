@@ -195,7 +195,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{} };
 
 /* ----------------------------- Utilidades ---------------------------------- */
 const BRL = new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
@@ -343,7 +343,10 @@ function sugerirCategoria(texto){
 /* ----------------------------- Roteador ------------------------------------ */
 const PAGINAS = [
   {id:"dashboard",icon:"📊",label:"Dashboard",render:renderDashboard},
-  {id:"caixa",icon:"💵",label:"Entradas e Saídas",render:renderCaixa},
+  {id:"entradas",icon:"📥",label:"Entradas",render:renderEntradas},
+  {id:"saidas",icon:"📤",label:"Saídas",render:renderSaidas},
+  {id:"contas",icon:"🧾",label:"Contas a pagar",render:renderContas},
+  {id:"tarefas",icon:"✅",label:"Tarefas",render:renderTarefas},
   {id:"precificacao",icon:"🏷️",label:"Precificação",render:renderPrecificacao},
   {id:"custos",icon:"📒",label:"Custos fixos/variáveis",render:renderCustos},
   {id:"dre",icon:"📈",label:"DRE (resultado)",render:renderDRE},
@@ -360,7 +363,7 @@ function render(){
   const pg = PAGINAS.find(p=>p.id===paginaAtual);
   document.getElementById("pgTitulo").textContent = pg.label;
   // Filtro de estabelecimento no topo (vale para Dashboard, Caixa e DRE).
-  const mostraFiltro = ["dashboard","caixa","dre"].includes(paginaAtual);
+  const mostraFiltro = ["dashboard","entradas","saidas","contas","tarefas","dre"].includes(paginaAtual);
   document.getElementById("topRight").innerHTML = mostraFiltro
     ? `<label class="f" style="margin:0 8px 0 0;display:inline">Estabelecimento</label>
        <select id="lojaFiltro" style="width:auto;display:inline-block" onchange="setLojaFiltro(this.value)">
@@ -403,8 +406,12 @@ function renderDashboard(el){
   const porCat = {};
   sai.forEach(s=>{ const k=catLabel(s.categoria); porCat[k]=(porCat[k]||0)+num(s.valor); });
   const cats = Object.entries(porCat).sort((a,b)=>b[1]-a[1]);
+  const contasAbertas = obj2arr(STATE.contas).filter(c=>c.status!=="paga" && daLoja(c));
+  const vencidas = contasAbertas.filter(c=>diasAte(c.vencimento)<0).length;
+  const proximas = contasAbertas.filter(c=>{const d=diasAte(c.vencimento);return d>=0&&d<=7;}).length;
   el.innerHTML = `
-    ${pend.length? `<div class="warn" style="margin-bottom:14px">📲 Você tem <b>${pend.length}</b> comprovante(s) do WhatsApp aguardando confirmação. <a onclick="irPara('caixa')" style="color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:underline">Ver no Caixa →</a></div>`:""}
+    ${pend.length? `<div class="warn" style="margin-bottom:14px">📲 Você tem <b>${pend.length}</b> comprovante(s) do WhatsApp aguardando confirmação. <a onclick="irPara('saidas')" style="color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:underline">Ver em Saídas →</a></div>`:""}
+    ${(vencidas||proximas)? `<div class="warn" style="margin-bottom:14px">🔔 ${vencidas?`<b>${vencidas}</b> conta(s) vencida(s)`:""}${vencidas&&proximas?" e ":""}${proximas?`<b>${proximas}</b> vencem em até 7 dias`:""}. <a onclick="irPara('tarefas')" style="color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:underline">Ver em Tarefas →</a></div>`:""}
     <div class="grid g4">
       <div class="stat"><div class="lbl">Receita líquida</div><div class="val pos">${reais(recLiq)}</div><div class="hint">Bruto ${reais(recBruta)} − taxas</div></div>
       <div class="stat"><div class="lbl">Despesas</div><div class="val neg">${reais(desp)}</div><div class="hint">${sai.length} lançamento(s)</div></div>
@@ -420,16 +427,40 @@ function renderDashboard(el){
 function fmtMesLabel(ym){ const [a,m]=ym.split("-"); const ms=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]; return `${ms[Number(m)-1]}/${a}`; }
 
 /* ===================== CAIXA (entradas e saídas) ========================== */
-function renderCaixa(el){
-  document.getElementById("pgSub").textContent = "Lance entradas e saídas. Comprovantes do WhatsApp aparecem aqui para confirmar.";
+function renderEntradas(el){
+  document.getElementById("pgSub").textContent = "Vendas e recebimentos. As vendas do Cardápio Web entram aqui automaticamente.";
   const optForma = FORMAS.map(f=>`<option value="${f.chave}">${f.label}</option>`).join("");
+  const optLoja = LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(l.nome)}</option>`).join("");
+  const ent = obj2arr(STATE.entradas).filter(daLoja).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  el.innerHTML = `
+  <div class="card"><div class="hd"><h3>Nova entrada</h3><p>Total do dia por forma de pagamento. A taxa é descontada sozinha.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Data</label><input type="date" id="e_data" value="${hojeISO()}"></div>
+      <div><label class="f">Valor (R$)</label><input id="e_valor" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="f">Forma</label><select id="e_forma">${optForma}</select></div>
+      <div><label class="f">Estabelecimento</label><select id="e_loja">${optLoja}</select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Descrição (opcional)</label><input id="e_desc" placeholder="Ex.: fechamento do dia"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addEntrada()">Lançar entrada</button></div>
+    </div>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Entradas (${ent.length})</h3></div><div class="bd">
+    ${ent.length? tabela(["Data","Loja","Forma","Bruto","Taxa","Líquido","Descrição",""], ent.map(e=>[
+      fmtData(e.data), `<span class="pill">${esc(lojaNome(e.loja))}</span>`, formaLabel(e.forma), reais(e.valor), pct(e.taxaPerc),
+      {h:`<b class="pos">${reais(num(e.valor)*(1-num(e.taxaPerc)/100))}</b>`}, esc(e.descricao||"—"),
+      {r:true,h:`<button class="btn ghost sm" onclick="removerMov('entradas','${e._id}')">excluir</button>`}
+    ])) : `<div class="empty">Nenhuma entrada ainda.</div>`}
+  </div></div>`;
+}
+
+function renderSaidas(el){
+  document.getElementById("pgSub").textContent = "Pagamentos e gastos. Comprovantes do WhatsApp aparecem aqui para confirmar.";
   const optCat = CATEGORIAS_SAIDA.map(c=>`<option value="${c.chave}">${c.label}</option>`).join("");
   const optLoja = LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(l.nome)}</option>`).join("");
   const fornecedores = [...new Set(obj2arr(STATE.saidas).map(s=>s.fornecedor).filter(Boolean))];
   const pend = obj2arr(STATE.saidas).filter(s=>s.status==="pendente" && daLoja(s)).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
-  const ent = obj2arr(STATE.entradas).filter(daLoja).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
   const sai = obj2arr(STATE.saidas).filter(s=>s.status==="confirmado" && daLoja(s)).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
-
   el.innerHTML = `
   ${pend.length? `<div class="card" style="border-color:#f0d488;margin-bottom:14px"><div class="hd"><h3>📲 Comprovantes do WhatsApp (${pend.length})</h3><p>Lidos pela IA a partir das fotos/PDFs do grupo. Confira e confirme — ou responda SIM/NÃO no próprio WhatsApp.</p></div><div class="bd">${
     pend.map(l=>`<div class="pend"><div>
@@ -443,53 +474,24 @@ function renderCaixa(el){
         <button class="btn sm red" onclick="descartarPendente('${l._id}')">Descartar</button>
       </div></div>`).join("")
   }</div></div>`:""}
-
-  <div class="grid g2">
-    <div class="card"><div class="hd"><h3>Nova entrada</h3><p>Total do dia por forma de pagamento. A taxa é descontada sozinha.</p></div><div class="bd">
-      <div class="row">
-        <div><label class="f">Data</label><input type="date" id="e_data" value="${hojeISO()}"></div>
-        <div><label class="f">Valor (R$)</label><input id="e_valor" inputmode="decimal" placeholder="0,00"></div>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <div><label class="f">Forma</label><select id="e_forma">${optForma}</select></div>
-        <div><label class="f">Estabelecimento</label><select id="e_loja">${optLoja}</select></div>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <div><label class="f">Descrição (opcional)</label><input id="e_desc" placeholder="Ex.: fechamento do dia"></div>
-      </div>
-      <button class="btn" style="margin-top:12px" onclick="addEntrada()">Lançar entrada</button>
-    </div></div>
-
-    <div class="card"><div class="hd"><h3>Nova saída</h3><p>Pagamentos do dia. A categoria já vem sugerida pela descrição.</p></div><div class="bd">
-      <div class="row">
-        <div><label class="f">Data</label><input type="date" id="s_data" value="${hojeISO()}"></div>
-        <div><label class="f">Valor (R$)</label><input id="s_valor" inputmode="decimal" placeholder="0,00"></div>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <div><label class="f">Categoria</label><select id="s_cat">${optCat}</select></div>
-        <div><label class="f">Fornecedor (opcional)</label><input id="s_forn" list="fornList" placeholder="Nenhum"><datalist id="fornList">${fornecedores.map(f=>`<option value="${esc(f)}">`).join("")}</datalist></div>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <div><label class="f">Estabelecimento</label><select id="s_loja">${optLoja}</select></div>
-        <div><label class="f">Descrição (opcional)</label><input id="s_desc" placeholder="Ex.: compra de carne" oninput="autoCat()"></div>
-      </div>
-      <button class="btn red" style="margin-top:12px" onclick="addSaida()">Lançar saída</button>
-    </div></div>
-  </div>
-
+  <div class="card"><div class="hd"><h3>Nova saída</h3><p>Pagamentos do dia. A categoria já vem sugerida pela descrição.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Data</label><input type="date" id="s_data" value="${hojeISO()}"></div>
+      <div><label class="f">Valor (R$)</label><input id="s_valor" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="f">Categoria</label><select id="s_cat">${optCat}</select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Fornecedor (opcional)</label><input id="s_forn" list="fornList" placeholder="Nenhum"><datalist id="fornList">${fornecedores.map(f=>`<option value="${esc(f)}">`).join("")}</datalist></div>
+      <div><label class="f">Estabelecimento</label><select id="s_loja">${optLoja}</select></div>
+      <div><label class="f">Descrição (opcional)</label><input id="s_desc" placeholder="Ex.: compra de carne" oninput="autoCat()"></div>
+    </div>
+    <button class="btn red" style="margin-top:12px" onclick="addSaida()">Lançar saída</button>
+  </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Saídas (${sai.length})</h3></div><div class="bd">
     ${sai.length? tabela(["Data","Loja","Categoria","Grupo","Fornecedor","Descrição","Valor",""], sai.map(s=>[
       fmtData(s.data), `<span class="pill">${esc(lojaNome(s.loja))}</span>`, catLabel(s.categoria), s.grupo==="PRODUCAO"?"Produção":"Operacional", esc(s.fornecedor||"—"), esc(s.descricao||"—"),
       {r:true,h:`<b class="neg">${reais(s.valor)}</b>`}, {r:true,h:`<button class="btn ghost sm" onclick="removerMov('saidas','${s._id}')">excluir</button>`}
     ])) : `<div class="empty">Nenhuma saída ainda.</div>`}
-  </div></div>
-
-  <div class="card" style="margin-top:14px"><div class="hd"><h3>Entradas (${ent.length})</h3></div><div class="bd">
-    ${ent.length? tabela(["Data","Loja","Forma","Bruto","Taxa","Líquido","Descrição",""], ent.map(e=>[
-      fmtData(e.data), `<span class="pill">${esc(lojaNome(e.loja))}</span>`, formaLabel(e.forma), reais(e.valor), pct(e.taxaPerc),
-      {h:`<b class="pos">${reais(num(e.valor)*(1-num(e.taxaPerc)/100))}</b>`}, esc(e.descricao||"—"),
-      {r:true,h:`<button class="btn ghost sm" onclick="removerMov('entradas','${e._id}')">excluir</button>`}
-    ])) : `<div class="empty">Nenhuma entrada ainda.</div>`}
   </div></div>`;
 }
 function autoCat(){ const s=sugerirCategoria(val("s_desc")); if(s){ const sel=document.getElementById("s_cat"); if(sel) sel.value=s; } }
@@ -498,6 +500,132 @@ function tabela(cabec, linhas){
     linhas.map(cols=>`<tr>${cols.map(c=> (c&&typeof c==="object")? `<td class="${c.r?'r':''}">${c.h}</td>` : `<td>${c}</td>`).join("")}</tr>`).join("")
   }</tbody></table>`;
 }
+
+/* ===================== CONTAS A PAGAR ===================================== */
+// Dias até o vencimento (negativo = vencida). Base: hoje (meia-noite).
+function diasAte(iso){
+  if(!iso) return null;
+  const hoje=new Date(hojeISO()+"T00:00:00"), v=new Date(iso.slice(0,10)+"T00:00:00");
+  return Math.round((v-hoje)/86400000);
+}
+// Rótulo + cor do vencimento.
+function venc(iso){
+  const d=diasAte(iso);
+  if(d===null) return {txt:"—",cls:"b-gray"};
+  if(d<0) return {txt:`vencida há ${-d}d`,cls:"b-red"};
+  if(d===0) return {txt:"vence hoje",cls:"b-red"};
+  if(d<=7) return {txt:`em ${d}d`,cls:"b-gold"};
+  return {txt:`em ${d}d`,cls:"b-gray"};
+}
+function renderContas(el){
+  document.getElementById("pgSub").textContent = "Cadastre contas com vencimento. Ao marcar como paga, vira uma saída no caixa.";
+  const optCat = CATEGORIAS_SAIDA.map(c=>`<option value="${c.chave}">${c.label}</option>`).join("");
+  const optLoja = LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(l.nome)}</option>`).join("");
+  const fornecedores = [...new Set(obj2arr(STATE.saidas).concat(obj2arr(STATE.contas)).map(s=>s.fornecedor).filter(Boolean))];
+  const abertas = obj2arr(STATE.contas).filter(c=>c.status!=="paga" && daLoja(c)).sort((a,b)=>(a.vencimento||"").localeCompare(b.vencimento||""));
+  const pagas = obj2arr(STATE.contas).filter(c=>c.status==="paga" && daLoja(c)).sort((a,b)=>(b.pagoEm||0)-(a.pagoEm||0)).slice(0,30);
+  const totalAberto = abertas.reduce((s,c)=>s+num(c.valor),0);
+  el.innerHTML = `
+  <div class="grid g3" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">Contas em aberto</div><div class="val neg">${reais(totalAberto)}</div><div class="hint">${abertas.length} conta(s)</div></div>
+    <div class="stat"><div class="lbl">Vencidas</div><div class="val ${abertas.some(c=>diasAte(c.vencimento)<0)?'neg':''}">${abertas.filter(c=>diasAte(c.vencimento)<0).length}</div></div>
+    <div class="stat"><div class="lbl">Vencem em 7 dias</div><div class="val gold">${abertas.filter(c=>{const d=diasAte(c.vencimento);return d>=0&&d<=7;}).length}</div></div>
+  </div>
+  <div class="card"><div class="hd"><h3>Nova conta a pagar</h3></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Descrição</label><input id="c_desc" placeholder="Ex.: Aluguel"></div>
+      <div><label class="f">Valor (R$)</label><input id="c_val" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="f">Vencimento</label><input type="date" id="c_venc" value="${hojeISO()}"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Categoria</label><select id="c_cat">${optCat}</select></div>
+      <div><label class="f">Fornecedor (opcional)</label><input id="c_forn" list="fornListC" placeholder="Nenhum"><datalist id="fornListC">${fornecedores.map(f=>`<option value="${esc(f)}">`).join("")}</datalist></div>
+      <div><label class="f">Estabelecimento</label><select id="c_loja">${optLoja}</select></div>
+      <div><label class="f">Repetir</label><select id="c_rec"><option value="nenhuma">Não repete</option><option value="mensal">Todo mês</option></select></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="addConta()">Adicionar conta</button>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Em aberto (${abertas.length})</h3><p>Ordenadas por vencimento. As que vencem em breve também aparecem em Tarefas.</p></div><div class="bd">
+    ${abertas.length? `<table><thead><tr><th>Vencimento</th><th>Status</th><th>Loja</th><th>Descrição</th><th>Categoria</th><th>Fornecedor</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
+      abertas.map(c=>{const v=venc(c.vencimento);return `<tr>
+        <td>${fmtData(c.vencimento)}</td>
+        <td><span class="badge ${v.cls}">${v.txt}</span></td>
+        <td><span class="pill">${esc(lojaNome(c.loja))}</span></td>
+        <td>${esc(c.descricao||"—")}${c.recorrencia==="mensal"?' <span class="pill">mensal</span>':''}</td>
+        <td class="muted">${catLabel(c.categoria)}</td>
+        <td class="muted">${esc(c.fornecedor||"—")}</td>
+        <td class="r"><b class="neg">${reais(c.valor)}</b></td>
+        <td class="r" style="white-space:nowrap"><button class="btn sm" onclick="pagarConta('${c._id}')">Pagar</button> <button class="btn ghost sm" onclick="removerConta('${c._id}')">excluir</button></td>
+      </tr>`;}).join("")
+    }</tbody></table>` : `<div class="empty">Nenhuma conta em aberto. 🎉</div>`}
+  </div></div>
+  ${pagas.length? `<div class="card" style="margin-top:14px"><div class="hd"><h3>Pagas recentemente</h3></div><div class="bd"><table><thead><tr><th>Vencimento</th><th>Loja</th><th>Descrição</th><th class="r">Valor</th></tr></thead><tbody>${
+    pagas.map(c=>`<tr><td>${fmtData(c.vencimento)}</td><td><span class="pill">${esc(lojaNome(c.loja))}</span></td><td>${esc(c.descricao||"—")}</td><td class="r">${reais(c.valor)}</td></tr>`).join("")
+  }</tbody></table></div></div>`:""}`;
+}
+function addConta(){
+  const descricao=val("c_desc"), valor=num(val("c_val")), vencimento=val("c_venc")||hojeISO();
+  if(!descricao||valor<=0) return toast("Preencha descrição e valor.");
+  const categoria=val("c_cat");
+  DB.push("contas",{descricao,valor,vencimento,categoria,grupo:grupoDe(categoria),fornecedor:val("c_forn")||null,loja:val("c_loja")||lojaPadrao(),recorrencia:val("c_rec")||"nenhuma",status:"aberta",criadoEm:Date.now()});
+  toast("Conta adicionada.");
+}
+function pagarConta(id){
+  const c=STATE.contas[id]; if(!c) return;
+  // vira uma saída no caixa, na data de hoje
+  DB.push("caixa/saidas",{data:hojeISO(),valor:num(c.valor),categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,descricao:(c.descricao||"Conta")+" (conta paga)",status:"confirmado",origem:"conta",loja:c.loja||lojaPadrao(),criadoEm:Date.now()});
+  DB.update("contas/"+id,{status:"paga",pagoEm:Date.now()});
+  // recorrência mensal: cria a próxima do mês seguinte
+  if(c.recorrencia==="mensal"){
+    const prox=proximoMesISO(c.vencimento);
+    DB.push("contas",{descricao:c.descricao,valor:num(c.valor),vencimento:prox,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,loja:c.loja||lojaPadrao(),recorrencia:"mensal",status:"aberta",criadoEm:Date.now()});
+  }
+  toast("Conta paga e lançada no caixa.");
+}
+function removerConta(id){ if(confirm("Excluir esta conta?")){ DB.remove("contas/"+id); } }
+function proximoMesISO(iso){
+  const d=new Date((iso||hojeISO()).slice(0,10)+"T00:00:00"); d.setMonth(d.getMonth()+1); return d.toISOString().slice(0,10);
+}
+
+/* ===================== TAREFAS (lembretes) =============================== */
+function renderTarefas(el){
+  document.getElementById("pgSub").textContent = "Seus lembretes de pagamento e tarefas do dia a dia.";
+  // Lembretes vêm das contas a pagar em aberto (próximos/vencidos primeiro).
+  const lembretes = obj2arr(STATE.contas).filter(c=>c.status!=="paga" && daLoja(c))
+    .map(c=>({...c, dias:diasAte(c.vencimento)})).sort((a,b)=>(a.dias??1e9)-(b.dias??1e9));
+  const tarefas = obj2arr(STATE.tarefas).filter(daLoja)
+    .sort((a,b)=>{ if((a.status==="concluida")!==(b.status==="concluida")) return a.status==="concluida"?1:-1; return (a.data||"").localeCompare(b.data||""); });
+  el.innerHTML = `
+  <div class="card"><div class="hd"><h3>🔔 Lembretes de pagamento (${lembretes.length})</h3><p>Vêm das Contas a pagar. Quando ligarmos o WhatsApp, dá pra avisar o time financeiro automaticamente.</p></div><div class="bd">
+    ${lembretes.length? lembretes.map(c=>{const v=venc(c.vencimento);return `<div class="pend">
+      <div><div><span class="badge ${v.cls}">${v.txt}</span> <b style="margin-left:6px">${reais(c.valor)}</b> <span class="muted">· ${esc(c.descricao||"Conta")}</span></div>
+      <div class="small muted">${esc(lojaNome(c.loja))} · vence ${fmtData(c.vencimento)} · ${catLabel(c.categoria)}</div></div>
+      <div style="display:flex;gap:8px"><button class="btn sm" onclick="pagarConta('${c._id}')">Marcar paga</button><button class="btn ghost sm" onclick="irPara('contas')">ver contas</button></div>
+    </div>`;}).join("") : `<div class="empty">Nenhum pagamento pendente. 🎉</div>`}
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Tarefas</h3></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Tarefa</label><input id="t_titulo" placeholder="Ex.: Conferir extrato do banco"></div>
+      <div><label class="f">Para quando (opcional)</label><input type="date" id="t_data"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addTarefa()">Adicionar</button></div>
+    </div>
+    <div class="hr"></div>
+    ${tarefas.length? tarefas.map(t=>`<div class="rz">
+      <span style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" style="width:auto" ${t.status==="concluida"?"checked":""} onchange="alternarTarefa('${t._id}',this.checked)">
+        <span style="${t.status==="concluida"?"text-decoration:line-through;color:#9aa39a":""}">${esc(t.titulo)}${t.data?` <span class="pill">${fmtData(t.data)}</span>`:""}</span>
+      </span>
+      <button class="btn ghost sm" onclick="removerTarefa('${t._id}')">excluir</button>
+    </div>`).join("") : `<div class="empty">Nenhuma tarefa. Adicione uma acima.</div>`}
+  </div></div>`;
+}
+function addTarefa(){
+  const titulo=val("t_titulo"); if(!titulo) return toast("Escreva a tarefa.");
+  DB.push("tarefas",{titulo,data:val("t_data")||null,status:"aberta",loja:lojaPadrao(),criadoEm:Date.now()});
+  toast("Tarefa adicionada.");
+}
+function alternarTarefa(id,feito){ DB.update("tarefas/"+id,{status:feito?"concluida":"aberta"}); }
+function removerTarefa(id){ DB.remove("tarefas/"+id); }
 
 /* ===================== PRECIFICAÇÃO ======================================= */
 let abaPrec = "precos";
@@ -928,6 +1056,8 @@ function boot(){
   bind("caixa/saidas","saidas");
   bind("caixa/entradas","entradas");
   bind("custos","custos");
+  bind("contas","contas");
+  bind("tarefas","tarefas");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; render(); });
   render();
 }
