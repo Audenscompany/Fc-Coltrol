@@ -307,6 +307,21 @@ const FORMAS = [
 ];
 const formaLabel = ch => (FORMAS.find(f=>f.chave===ch)?.label) || ch || "—";
 const formaTaxa = ch => (FORMAS.find(f=>f.chave===ch)?.taxa) || 0;
+
+/* ----------------------- LOJAS (estabelecimentos) -------------------------
+   Cada lançamento tem uma etiqueta `loja`. O webhook do Cardápio Web manda
+   ?loja=burguer ou ?loja=pizza; nos lançamentos manuais você escolhe.
+   O filtro no topo mostra Todos, ou só uma loja. */
+const LOJAS = [
+  {id:"burguer", nome:"Burguer FC"},
+  {id:"pizza",   nome:"Pizza FC"},
+];
+const lojaNome = id => (LOJAS.find(l=>l.id===id)?.nome) || (id||"—");
+let lojaFiltro = localStorage.getItem("fc_loja_filtro") || "todos";
+function setLojaFiltro(v){ lojaFiltro=v; localStorage.setItem("fc_loja_filtro",v); render(); }
+const daLoja = m => lojaFiltro==="todos" || (m.loja||"")===lojaFiltro;
+// loja padrão para novos lançamentos manuais: a do filtro, ou a primeira da lista.
+const lojaPadrao = () => lojaFiltro!=="todos"? lojaFiltro : LOJAS[0].id;
 const REGRAS_CAT = [
   ["INSUMOS",["acougue","açougue","carne","frango","frigorifico","hortifruti","sacolao","atacad","supermercado","mercado","distribuidora","frios","queijo","verdura","legume","peixe","assai","tenda","makro","carrefour","comercio","padaria","panificadora"]],
   ["EMBALAGENS",["embalagem","descartavel","descartável","marmita","sacola","copo descart","guardanapo","isopor","pote"]],
@@ -344,7 +359,15 @@ function irPara(id){ paginaAtual=id; montarNav(); render(); }
 function render(){
   const pg = PAGINAS.find(p=>p.id===paginaAtual);
   document.getElementById("pgTitulo").textContent = pg.label;
-  document.getElementById("topRight").innerHTML = "";
+  // Filtro de estabelecimento no topo (vale para Dashboard, Caixa e DRE).
+  const mostraFiltro = ["dashboard","caixa","dre"].includes(paginaAtual);
+  document.getElementById("topRight").innerHTML = mostraFiltro
+    ? `<label class="f" style="margin:0 8px 0 0;display:inline">Estabelecimento</label>
+       <select id="lojaFiltro" style="width:auto;display:inline-block" onchange="setLojaFiltro(this.value)">
+         <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
+         ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(l.nome)}</option>`).join("")}
+       </select>`
+    : "";
   pg.render(document.getElementById("content"));
 }
 
@@ -352,13 +375,13 @@ function render(){
 function addEntrada(){
   const data=val("e_data")||hojeISO(), valor=num(val("e_valor")), forma=val("e_forma");
   if(valor<=0) return toast("Informe o valor da entrada.");
-  DB.push("caixa/entradas",{data,valor,forma,taxaPerc:formaTaxa(forma),descricao:val("e_desc")||null,criadoEm:Date.now()});
+  DB.push("caixa/entradas",{data,valor,forma,taxaPerc:formaTaxa(forma),descricao:val("e_desc")||null,loja:val("e_loja")||lojaPadrao(),criadoEm:Date.now()});
   toast("Entrada lançada.");
 }
 function addSaida(){
   const data=val("s_data")||hojeISO(), valor=num(val("s_valor")), categoria=val("s_cat");
   if(valor<=0) return toast("Informe o valor da saída.");
-  DB.push("caixa/saidas",{data,valor,categoria,grupo:grupoDe(categoria),fornecedor:val("s_forn")||null,descricao:val("s_desc")||null,status:"confirmado",origem:"manual",criadoEm:Date.now()});
+  DB.push("caixa/saidas",{data,valor,categoria,grupo:grupoDe(categoria),fornecedor:val("s_forn")||null,descricao:val("s_desc")||null,status:"confirmado",origem:"manual",loja:val("s_loja")||lojaPadrao(),criadoEm:Date.now()});
   toast("Saída lançada.");
 }
 function confirmarPendente(id){ DB.update("caixa/saidas/"+id,{status:"confirmado"}); toast("Comprovante confirmado e lançado."); }
@@ -370,9 +393,9 @@ const val = id => { const e=document.getElementById(id); return e? e.value.trim(
 function renderDashboard(el){
   document.getElementById("pgSub").textContent = "Visão do mês de "+fmtMesLabel(mesAtual());
   const ym=mesAtual();
-  const ent = obj2arr(STATE.entradas).filter(e=>noMes(e.data,ym));
-  const sai = obj2arr(STATE.saidas).filter(s=>noMes(s.data,ym) && s.status==="confirmado");
-  const pend = obj2arr(STATE.saidas).filter(s=>s.status==="pendente");
+  const ent = obj2arr(STATE.entradas).filter(e=>noMes(e.data,ym) && daLoja(e));
+  const sai = obj2arr(STATE.saidas).filter(s=>noMes(s.data,ym) && s.status==="confirmado" && daLoja(s));
+  const pend = obj2arr(STATE.saidas).filter(s=>s.status==="pendente" && daLoja(s));
   const recBruta = ent.reduce((t,e)=>t+num(e.valor),0);
   const recLiq = ent.reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
   const desp = sai.reduce((t,s)=>t+num(s.valor),0);
@@ -401,10 +424,11 @@ function renderCaixa(el){
   document.getElementById("pgSub").textContent = "Lance entradas e saídas. Comprovantes do WhatsApp aparecem aqui para confirmar.";
   const optForma = FORMAS.map(f=>`<option value="${f.chave}">${f.label}</option>`).join("");
   const optCat = CATEGORIAS_SAIDA.map(c=>`<option value="${c.chave}">${c.label}</option>`).join("");
+  const optLoja = LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(l.nome)}</option>`).join("");
   const fornecedores = [...new Set(obj2arr(STATE.saidas).map(s=>s.fornecedor).filter(Boolean))];
-  const pend = obj2arr(STATE.saidas).filter(s=>s.status==="pendente").sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
-  const ent = obj2arr(STATE.entradas).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
-  const sai = obj2arr(STATE.saidas).filter(s=>s.status==="confirmado").sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  const pend = obj2arr(STATE.saidas).filter(s=>s.status==="pendente" && daLoja(s)).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  const ent = obj2arr(STATE.entradas).filter(daLoja).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  const sai = obj2arr(STATE.saidas).filter(s=>s.status==="confirmado" && daLoja(s)).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
 
   el.innerHTML = `
   ${pend.length? `<div class="card" style="border-color:#f0d488;margin-bottom:14px"><div class="hd"><h3>📲 Comprovantes do WhatsApp (${pend.length})</h3><p>Lidos pela IA a partir das fotos/PDFs do grupo. Confira e confirme — ou responda SIM/NÃO no próprio WhatsApp.</p></div><div class="bd">${
@@ -428,6 +452,9 @@ function renderCaixa(el){
       </div>
       <div class="row" style="margin-top:10px">
         <div><label class="f">Forma</label><select id="e_forma">${optForma}</select></div>
+        <div><label class="f">Estabelecimento</label><select id="e_loja">${optLoja}</select></div>
+      </div>
+      <div class="row" style="margin-top:10px">
         <div><label class="f">Descrição (opcional)</label><input id="e_desc" placeholder="Ex.: fechamento do dia"></div>
       </div>
       <button class="btn" style="margin-top:12px" onclick="addEntrada()">Lançar entrada</button>
@@ -443,6 +470,7 @@ function renderCaixa(el){
         <div><label class="f">Fornecedor (opcional)</label><input id="s_forn" list="fornList" placeholder="Nenhum"><datalist id="fornList">${fornecedores.map(f=>`<option value="${esc(f)}">`).join("")}</datalist></div>
       </div>
       <div class="row" style="margin-top:10px">
+        <div><label class="f">Estabelecimento</label><select id="s_loja">${optLoja}</select></div>
         <div><label class="f">Descrição (opcional)</label><input id="s_desc" placeholder="Ex.: compra de carne" oninput="autoCat()"></div>
       </div>
       <button class="btn red" style="margin-top:12px" onclick="addSaida()">Lançar saída</button>
@@ -450,15 +478,15 @@ function renderCaixa(el){
   </div>
 
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Saídas (${sai.length})</h3></div><div class="bd">
-    ${sai.length? tabela(["Data","Categoria","Grupo","Fornecedor","Descrição","Valor",""], sai.map(s=>[
-      fmtData(s.data), catLabel(s.categoria), s.grupo==="PRODUCAO"?"Produção":"Operacional", esc(s.fornecedor||"—"), esc(s.descricao||"—"),
+    ${sai.length? tabela(["Data","Loja","Categoria","Grupo","Fornecedor","Descrição","Valor",""], sai.map(s=>[
+      fmtData(s.data), `<span class="pill">${esc(lojaNome(s.loja))}</span>`, catLabel(s.categoria), s.grupo==="PRODUCAO"?"Produção":"Operacional", esc(s.fornecedor||"—"), esc(s.descricao||"—"),
       {r:true,h:`<b class="neg">${reais(s.valor)}</b>`}, {r:true,h:`<button class="btn ghost sm" onclick="removerMov('saidas','${s._id}')">excluir</button>`}
     ])) : `<div class="empty">Nenhuma saída ainda.</div>`}
   </div></div>
 
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Entradas (${ent.length})</h3></div><div class="bd">
-    ${ent.length? tabela(["Data","Forma","Bruto","Taxa","Líquido","Descrição",""], ent.map(e=>[
-      fmtData(e.data), formaLabel(e.forma), reais(e.valor), pct(e.taxaPerc),
+    ${ent.length? tabela(["Data","Loja","Forma","Bruto","Taxa","Líquido","Descrição",""], ent.map(e=>[
+      fmtData(e.data), `<span class="pill">${esc(lojaNome(e.loja))}</span>`, formaLabel(e.forma), reais(e.valor), pct(e.taxaPerc),
       {h:`<b class="pos">${reais(num(e.valor)*(1-num(e.taxaPerc)/100))}</b>`}, esc(e.descricao||"—"),
       {r:true,h:`<button class="btn ghost sm" onclick="removerMov('entradas','${e._id}')">excluir</button>`}
     ])) : `<div class="empty">Nenhuma entrada ainda.</div>`}
@@ -658,8 +686,8 @@ function removerCusto(id){ if(confirm("Excluir este custo?")){ DB.remove("custos
 function renderDRE(el){
   const ym=mesAtual();
   document.getElementById("pgSub").textContent = "Resultado de "+fmtMesLabel(ym);
-  const ent=obj2arr(STATE.entradas).filter(e=>noMes(e.data,ym));
-  const sai=obj2arr(STATE.saidas).filter(s=>noMes(s.data,ym)&&s.status==="confirmado");
+  const ent=obj2arr(STATE.entradas).filter(e=>noMes(e.data,ym)&&daLoja(e));
+  const sai=obj2arr(STATE.saidas).filter(s=>noMes(s.data,ym)&&s.status==="confirmado"&&daLoja(s));
   const recLiq=ent.reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
   const prod=sai.filter(s=>s.grupo==="PRODUCAO").reduce((t,s)=>t+num(s.valor),0);
   const oper=sai.filter(s=>s.grupo!=="PRODUCAO").reduce((t,s)=>t+num(s.valor),0);
@@ -760,6 +788,34 @@ function _parseInsumos(m){
   }
   return out;
 }
+/* Fichas técnicas: a aba é uma grade de blocos. Cada bloco começa com "Produto|Produto|NOME",
+   depois a linha "Código|Item|Valor unit.|Unidade ou Grama|Und. no Produto", e os itens abaixo.
+   Devolve um mapa nomeNormalizado -> { nome, itens:[{insumoNome,quantidade,valorUnit}] }. */
+function _parseFichaBlocos(m){
+  if(!m) return {};
+  const mapa={};
+  for(let r=0;r<m.length;r++){
+    const row=m[r]||[];
+    for(let c=0;c<row.length;c++){
+      if(norm(_cell(m,r,c))==="PRODUTO" && norm(_cell(m,r,c+1))==="PRODUTO"){
+        const nome=String(_cell(m,r,c+2)??"").trim();
+        if(!nome) continue;
+        const itens=[];
+        for(let rr=r+2; rr<Math.min(m.length, r+2+80); rr++){
+          const it=String(_cell(m,rr,c+1)??"").trim();
+          if(!it) break;
+          if(norm(it)==="ITEM") continue;
+          const quantidade=_toNum(_cell(m,rr,c+3)); // Unidade ou Grama
+          const valorUnit=_toNum(_cell(m,rr,c+2));   // Valor unit. (por grama/unidade)
+          if(!Number.isFinite(quantidade)||quantidade<=0) continue;
+          itens.push({insumoNome:it, quantidade, valorUnit:Number.isFinite(valorUnit)?valorUnit:0});
+        }
+        if(itens.length) mapa[norm(nome)]={nome,itens};
+      }
+    }
+  }
+  return mapa;
+}
 /* Produtos a partir da aba RELAÇÃO DE PRODUTOS (tabela limpa: Produto, Valor de Venda, CMV...). */
 function _parseProdutosRelacao(m){
   if(!m) return null;
@@ -804,7 +860,10 @@ function interpretarPlanilha(getSheet){
   const insumos=_parseInsumos(mProd);
   // Produtos: preferimos a aba RELAÇÃO DE PRODUTOS (tabela limpa com CMV pronto); se não houver,
   // caímos no leitor da FICHA TÉCNICA (template antigo).
-  const produtos=_parseProdutosRelacao(getSheet("RELACAO DE PRODUTOS")) || (mFicha?_parseProdutos(mFicha):[]) || [];
+  const fichas = mFicha ? _parseFichaBlocos(mFicha) : {};
+  let produtos=_parseProdutosRelacao(getSheet("RELACAO DE PRODUTOS")) || (mFicha?_parseProdutos(mFicha):[]) || [];
+  // Anexa a ficha técnica a cada produto pelo nome (quando houver um bloco correspondente).
+  produtos = produtos.map(p=>{ const f=fichas[norm(p.nome)]; return f? Object.assign({},p,{itens:f.itens}) : p; });
   const bebidas=mBeb?_parseBebidas(mBeb):[];
   const custos=[..._SEC_FIXAS.flatMap(s=>_lerSecao(mFix,s,"FIXO")),..._SEC_VAR.flatMap(s=>_lerSecao(mVar,s,"VARIAVEL"))];
   const taxaImposto=_parseImposto(mVar); const parametros=_parseParametros(mDad,taxaImposto);
