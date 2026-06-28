@@ -189,9 +189,31 @@
   .diabadge b{font-size:15px;color:#1f2937} .diabadge span{font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.5px;margin-top:2px}
   .linkmais{color:var(--green-d);font-weight:700;cursor:pointer;text-decoration:none;font-size:13px}
   .linkmais:hover{text-decoration:underline}
+  /* Login */
+  #login{position:fixed;inset:0;background:linear-gradient(135deg,#143019,#0f240e);display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
+  .login-card{background:#fff;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:32px;width:100%;max-width:380px;text-align:center}
+  .login-card img{width:72px;height:72px;object-fit:contain;margin-bottom:8px}
+  .login-card h2{margin:0 0 2px;font-size:20px} .login-card .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .login-card label{display:block;text-align:left;font-size:12px;font-weight:600;color:#374151;margin:10px 0 4px}
+  .login-card .btn{width:100%;justify-content:center;margin-top:18px;padding:11px}
+  .login-err{color:var(--red-d);font-size:13px;margin-top:10px;min-height:18px}
+  .sair{display:block;margin-top:8px;color:#cfe0cd;font-size:12px;cursor:pointer;text-decoration:underline}
 </style>
 </head>
 <body>
+<div id="login">
+  <div class="login-card">
+    <img src="logo.svg" alt="FC Control" onerror="this.src='logo.png'"/>
+    <h2>FC Control</h2>
+    <div class="sub">Entre para acessar o painel</div>
+    <label>E-mail</label>
+    <input id="login_email" type="email" placeholder="seu@email.com" onkeydown="if(event.key==='Enter')fazerLogin()">
+    <label>Senha</label>
+    <input id="login_senha" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')fazerLogin()">
+    <button class="btn" onclick="fazerLogin()">Entrar</button>
+    <div class="login-err" id="login_err"></div>
+  </div>
+</div>
 <div class="app">
   <aside class="side">
     <div class="brand">
@@ -205,7 +227,7 @@
         <div class="plano-s">Seu plano está ativo.</div>
         <button class="plano-btn" onclick="irPara('config')">Ver benefícios →</button>
       </div>
-      <div class="foot" style="margin-top:8px">FC Control · <span id="modoDados">modo local</span></div>
+      <div class="foot" style="margin-top:8px"><span id="usuarioAtual"></span> · <span id="modoDados">modo local</span><span class="sair" onclick="logout()">Sair</span></div>
     </div>
   </aside>
   <main class="main">
@@ -295,7 +317,42 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{} };
+
+/* ===================== LOGIN E PERMISSÕES ================================
+   Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
+   são criados em Configurações → Usuários, com a lista de páginas que podem ver.
+   Observação: é uma trava de uso, não criptografia forte. */
+function hashSenha(s){ let h=5381; for(let i=0;i<(s||"").length;i++){ h=((h<<5)+h+s.charCodeAt(i))>>>0; } return "h"+h.toString(36); }
+const GESTOR = { nome:"Gestor", email:"burguerfc2019@gmail.com", senhaHash:"hhjv5gl" };
+let SESSAO = JSON.parse(localStorage.getItem("fc_sessao")||"null");
+function sessaoValida(){ return SESSAO && SESSAO.email; }
+function ehGestor(){ return SESSAO && SESSAO.perfil==="gestor"; }
+function temAcesso(pageId){ if(ehGestor()) return true; if(!SESSAO) return false; return Array.isArray(SESSAO.permissoes) && SESSAO.permissoes.includes(pageId); }
+function fazerLogin(){
+  const email=(val("login_email")||"").trim().toLowerCase(), senha=val("login_senha");
+  const err=document.getElementById("login_err"); err.textContent="";
+  if(!email||!senha){ err.textContent="Preencha e-mail e senha."; return; }
+  if(email===GESTOR.email && hashSenha(senha)===GESTOR.senhaHash){
+    SESSAO={nome:GESTOR.nome,email:GESTOR.email,perfil:"gestor"};
+  } else {
+    const u=obj2arr(STATE.usuarios).find(x=>(x.email||"").toLowerCase()===email && x.ativo!==false);
+    if(u && u.senhaHash===hashSenha(senha)) SESSAO={nome:u.nome||email,email:email,perfil:"usuario",permissoes:u.permissoes||[]};
+    else { err.textContent="E-mail ou senha incorretos."; return; }
+  }
+  localStorage.setItem("fc_sessao",JSON.stringify(SESSAO));
+  entrarApp();
+}
+function logout(){ SESSAO=null; localStorage.removeItem("fc_sessao"); mostrarLogin(); }
+function mostrarLogin(){ document.getElementById("login").style.display="flex"; document.querySelector(".app").style.display="none"; }
+function entrarApp(){
+  document.getElementById("login").style.display="none";
+  document.querySelector(".app").style.display="flex";
+  document.getElementById("usuarioAtual").textContent = SESSAO? (SESSAO.nome||SESSAO.email) : "";
+  // primeira página permitida
+  if(!temAcesso(paginaAtual)){ const prim=PAGINAS.find(p=>!p.oculto && temAcesso(p.id)); paginaAtual = prim? prim.id : "dashboard"; }
+  montarNav(); render();
+}
 
 /* ----------------------------- Utilidades ---------------------------------- */
 const BRL = new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
@@ -461,6 +518,7 @@ const PAGINAS = [
   {id:"categorias",icon:"🗂️",label:"Categorias",grupo:"CONFIGURAÇÕES",render:renderCategorias},
   {id:"formas",icon:"💳",label:"Formas de pagamento",grupo:"CONFIGURAÇÕES",render:renderFormas},
   {id:"estabelecimentos",icon:"🏪",label:"Estabelecimentos",grupo:"CONFIGURAÇÕES",render:renderEstabelecimentos},
+  {id:"usuarios",icon:"👥",label:"Usuários e acessos",grupo:"CONFIGURAÇÕES",soGestor:true,render:renderUsuarios},
   {id:"config",icon:"⚙️",label:"Configurações",grupo:"CONFIGURAÇÕES",render:renderConfig},
   {id:"tarefas",icon:"✅",label:"Tarefas",grupo:"",oculto:true,render:renderTarefas},
 ];
@@ -469,7 +527,7 @@ let paginaAtual = "dashboard";
 function montarNav(){
   let html="";
   for(const g of GRUPOS){
-    const itens = PAGINAS.filter(p=>p.grupo===g && !p.oculto);
+    const itens = PAGINAS.filter(p=>p.grupo===g && !p.oculto && (!p.soGestor || ehGestor()) && temAcesso(p.id));
     if(!itens.length) continue;
     html += `<div class="grp">${g}</div>` + itens.map(p=>
       `<a data-id="${p.id}" class="${p.id===paginaAtual?'active':''}" onclick="irPara('${p.id}')"><span class="ico">${p.icon}</span><span class="lbl">${p.label}</span></a>`
@@ -477,13 +535,14 @@ function montarNav(){
   }
   document.getElementById("nav").innerHTML = html;
 }
-function irPara(id){ paginaAtual=id; montarNav(); render(); }
+function irPara(id){ const p=PAGINAS.find(x=>x.id===id); if(p && p.soGestor && !ehGestor()) return; if(!temAcesso(id)){ toast("Você não tem acesso a essa área."); return; } paginaAtual=id; montarNav(); render(); }
 let mesRef = mesAtual();
 function setMesRef(v){ if(v){ mesRef=v; render(); } }
 function toggleNovaMov(ev){ ev.stopPropagation(); const m=document.getElementById("novaMovMenu"); if(m) m.style.display = m.style.display==="none"?"block":"none"; }
 document.addEventListener("click",()=>{ const m=document.getElementById("novaMovMenu"); if(m) m.style.display="none"; });
 function render(){
-  const pg = PAGINAS.find(p=>p.id===paginaAtual);
+  if(!sessaoValida()) return;
+  const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
   const comFiltro = ["dashboard","dash2","entradas","saidas","contas","receber","tarefas","dre","fluxo"].includes(paginaAtual);
   const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
@@ -993,6 +1052,42 @@ function renderEstabelecimentos(el){
   el.innerHTML = identidadeVisualHTML();
 }
 
+/* ===================== USUÁRIOS E ACESSOS (só gestor) =================== */
+function paginasPermissionaveis(){ return PAGINAS.filter(p=>!p.oculto && !p.soGestor); }
+function renderUsuarios(el){
+  document.getElementById("pgSub").textContent = "Crie acessos e escolha o que cada usuário pode ver.";
+  const usuarios = obj2arr(STATE.usuarios);
+  const checks = paginasPermissionaveis().map(p=>`<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin:4px 12px 4px 0"><input type="checkbox" id="perm_${p.id}" style="width:auto"> ${esc(p.label)}</label>`).join("");
+  el.innerHTML = `
+  <div class="card"><div class="hd"><h3>Gestor (você)</h3></div><div class="bd small">
+    <b>${esc(GESTOR.email)}</b> — acesso total. (Para trocar a senha do gestor, me avise.)
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Novo usuário</h3><p>Defina e-mail, senha e marque as áreas que ele pode acessar.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Nome</label><input id="u_nome" placeholder="Ex.: Maria (Financeiro)"></div>
+      <div><label class="f">E-mail</label><input id="u_email" type="email" placeholder="maria@email.com"></div>
+      <div><label class="f">Senha</label><input id="u_senha" type="text" placeholder="senha de acesso"></div>
+    </div>
+    <div style="margin-top:12px"><div class="secao-titulo">Pode acessar</div>${checks}</div>
+    <button class="btn" style="margin-top:12px" onclick="addUsuario()">Criar usuário</button>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Usuários (${usuarios.length})</h3></div><div class="bd">
+    ${usuarios.length? `<table><thead><tr><th>Nome</th><th>E-mail</th><th>Acessos</th><th>Status</th><th></th></tr></thead><tbody>${
+      usuarios.map(u=>`<tr><td><b>${esc(u.nome||"—")}</b></td><td class="muted">${esc(u.email||"—")}</td><td class="small">${(u.permissoes||[]).map(id=>esc((PAGINAS.find(p=>p.id===id)||{}).label||id)).join(", ")||'<span class="muted">nenhum</span>'}</td><td>${u.ativo===false?'<span class="badge b-gray">inativo</span>':'<span class="badge b-green">ativo</span>'}</td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="alternarUsuario('${u._id}',${u.ativo===false})">${u.ativo===false?"ativar":"desativar"}</button> <button class="btn ghost sm" onclick="removerUsuario('${u._id}')">excluir</button></td></tr>`).join("")
+    }</tbody></table>` : `<div class="empty">Nenhum usuário criado ainda.</div>`}
+  </div></div>`;
+}
+function addUsuario(){
+  const nome=val("u_nome"), email=(val("u_email")||"").trim().toLowerCase(), senha=val("u_senha");
+  if(!email||!senha) return toast("Informe e-mail e senha.");
+  const permissoes = paginasPermissionaveis().filter(p=>{const c=document.getElementById("perm_"+p.id);return c&&c.checked;}).map(p=>p.id);
+  if(!permissoes.length) return toast("Marque pelo menos uma área de acesso.");
+  DB.push("usuarios",{nome:nome||email,email,senhaHash:hashSenha(senha),permissoes,ativo:true,criadoEm:Date.now()});
+  toast("Usuário criado.");
+}
+function alternarUsuario(id,ativar){ DB.update("usuarios/"+id,{ativo:!!ativar}); }
+function removerUsuario(id){ if(confirm("Excluir este usuário?")){ DB.remove("usuarios/"+id); } }
+
 /* ===================== PRECIFICAÇÃO ======================================= */
 let abaPrec = "precos";
 function renderPrecificacao(el){
@@ -1497,8 +1592,7 @@ function limparFirebase(){ localStorage.removeItem("fc_firebase_cfg"); toast("Mo
 /* ----------------------------- Boot ---------------------------------------- */
 function boot(){
   DB.init();
-  montarNav();
-  const bind = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; render(); });
+  const bind = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; if(sessaoValida()) render(); });
   bind("insumos","insumos");
   bind("produtos","produtos");
   bind("caixa/saidas","saidas");
@@ -1507,9 +1601,10 @@ function boot(){
   bind("contas","contas");
   bind("receber","receber");
   bind("tarefas","tarefas");
-  DB.list("parametros", v=>{ STATE.parametros = v||{}; render(); });
-  DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); render(); });
-  render();
+  bind("usuarios","usuarios");
+  DB.list("parametros", v=>{ STATE.parametros = v||{}; if(sessaoValida()) render(); });
+  DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
+  if(sessaoValida()) entrarApp(); else mostrarLogin();
 }
 window.addEventListener("DOMContentLoaded", boot);
 </script>
