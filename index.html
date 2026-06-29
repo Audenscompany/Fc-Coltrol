@@ -1067,37 +1067,9 @@ function renderVendas(el){
     <div class="kpi"><div class="ic b">↗</div><div><div class="kl">Receita líquida</div><div class="kv">${reais(liq)}</div><div class="kh">após taxas e descontos</div></div></div>
     <div class="kpi"><div class="ic y">🏷️</div><div><div class="kl">Ticket médio</div><div class="kv gold">${reais(ticket)}</div></div></div>
   </div>
-  <div class="chart-grid" style="margin-top:16px">
-    <div class="card"><div class="hd"><h3>Receita líquida por canal — ${fmtMesLabel(ym)}</h3></div><div class="bd">
-      ${canalArr.length?`<div class="cat-grid"><div class="chart-box sm"><canvas id="chVendaCanal"></canvas></div><div class="legend">${canalArr.map(([k,v],i)=>`<div class="li"><span class="dot" style="background:${PAL_CAT[i%PAL_CAT.length]}"></span><span class="ln">${esc(k)}</span><span class="lv">${reais(v)}</span><span class="lp">${liq?Math.round(v/liq*100):0}%</span></div>`).join("")}</div></div>`:`<div class="empty">Sem vendas confirmadas no mês. Cadastre ao lado ou conecte o Cardápio Web.</div>`}
-    </div></div>
-    <div class="card"><div class="hd"><h3>Nova venda / pedido</h3></div><div class="bd">
-      <div class="row">
-        <div><label class="f">Data</label><input type="date" id="vd_data" value="${hojeISO()}"></div>
-        <div><label class="f">Loja</label><select id="vd_loja">${LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
-        <div><label class="f">Canal</label><select id="vd_canal" onchange="atualizarItensVenda()">${optCanais("proprio")}</select></div>
-        <div><label class="f">Status</label><select id="vd_status"><option value="confirmado">Confirmado</option><option value="cancelado">Cancelado</option><option value="estornado">Estornado</option></select></div>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <div><label class="f">Nº pedido (opcional)</label><input id="vd_numero" placeholder="ex.: 56881"></div>
-        <div><label class="f">Forma de pagamento</label><select id="vd_forma" onchange="atualizarItensVenda()">${FORMAS.map(f=>`<option value="${f.chave}">${f.label}</option>`).join("")}</select></div>
-        <div><label class="f">Frete</label><input id="vd_frete" inputmode="decimal" value="0" oninput="atualizarItensVenda()"></div>
-        <div><label class="f">Desconto</label><input id="vd_desconto" inputmode="decimal" value="0" oninput="atualizarItensVenda()"></div>
-      </div>
-      <div class="hr"></div>
-      <div class="secao-titulo" style="margin-top:0">Itens do pedido</div>
-      <div class="row">
-        <div><label class="f">Produto</label><select id="vi_produto">${optProd||'<option value="">— cadastre produtos —</option>'}</select></div>
-        <div><label class="f">Qtd</label><input id="vi_qtd" inputmode="decimal" placeholder="1"></div>
-        <div><label class="f">Desc. item</label><input id="vi_desc" inputmode="decimal" placeholder="0"></div>
-        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="addItemVenda()">+ item</button></div>
-      </div>
-      <div id="venda_itens" style="margin-top:8px">${itensVendaHTML()}</div>
-      <div id="venda_resumo" style="margin-top:8px">${resumoVendaHTML()}</div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:8px"><input type="checkbox" id="vd_gerarentrada" style="width:auto"> Gerar entrada no caixa vinculada a esta venda</label>
-      <button class="btn" style="margin-top:10px" onclick="salvarVenda()">Salvar venda</button>
-    </div></div>
-  </div>
+  <div class="card" style="margin-top:16px"><div class="hd"><h3>Receita líquida por canal — ${fmtMesLabel(ym)}</h3><p>As vendas entram automaticamente pelo Cardápio Web (iFood, próprio, etc.). Não há lançamento manual.</p></div><div class="bd">
+    ${canalArr.length?`<div class="cat-grid"><div class="chart-box sm"><canvas id="chVendaCanal"></canvas></div><div class="legend">${canalArr.map(([k,v],i)=>`<div class="li"><span class="dot" style="background:${PAL_CAT[i%PAL_CAT.length]}"></span><span class="ln">${esc(k)}</span><span class="lv">${reais(v)}</span><span class="lp">${liq?Math.round(v/liq*100):0}%</span></div>`).join("")}</div></div>`:`<div class="empty">Sem vendas neste mês. Os pedidos do Cardápio Web aparecem aqui automaticamente assim que a integração estiver ativa.</div>`}
+  </div></div>
   <div class="card" style="margin-top:16px"><div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3>Vendas de ${fmtMesLabel(ym)} (${lista.length})</h3>
     <div style="display:flex;gap:8px">
       <select onchange="vendaCanalFiltro=this.value;render()"><option value="todos">Todos os canais</option>${canaisTodos().map(c=>`<option value="${c.id}"${vendaCanalFiltro===c.id?" selected":""}>${esc(c.nome)}</option>`).join("")}</select>
