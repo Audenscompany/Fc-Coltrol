@@ -368,26 +368,58 @@ function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg
 function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 const obj2arr = o => Object.entries(o||{}).map(([id,v])=>Object.assign({_id:id}, v));
 
-/* ===================== PRECIFICAÇÃO (portado do Audens) ===================== */
+/* ===================== PRECIFICAÇÃO (portado do Audens) =====================
+   IMPORTANTE: insumos, produtos, custos e parâmetros são SEPARADOS por loja.
+   Cada registro carrega o campo `loja`; os parâmetros ficam em parametros/<loja>.
+   A loja ativa da precificação é a do filtro no topo (lojaPrecAtual). */
 function custoUnitario(insumo){ const q=num(insumo.quantidadeCompra); return q? num(insumo.valorCompra)/q : 0; }
-function insumoPorNome(nome){ const n=norm(nome); return obj2arr(STATE.insumos).find(i=>norm(i.nome)===n)||null; }
+// Loja "dona" da tela de precificação/custos: a selecionada no topo (null quando "Todos").
+function lojaPrecAtual(){ return lojaFiltro!=="todos" ? lojaFiltro : null; }
+function bannerEscolherLoja(msg){
+  return `<div class="card"><div class="bd"><div class="empty" style="padding:22px">
+    <div style="margin-bottom:12px">${esc(msg||"A precificação é separada por loja. Escolha qual loja você quer ver/editar:")}</div>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">${LOJAS.map(l=>`<button class="btn" onclick="setLojaFiltro('${l.id}')">${esc(lojaNome(l.id))}</button>`).join("")}</div>
+  </div></div></div>`;
+}
+function insumosDaLoja(loja){ return obj2arr(STATE.insumos).filter(i=>(i.loja||"")===loja); }
+function produtosDaLoja(loja){ return obj2arr(STATE.produtos).filter(p=>(p.loja||"")===loja); }
+function custosDaLoja(loja){ return obj2arr(STATE.custos).filter(c=>(c.loja||"")===loja); }
+function paramsDaLoja(loja){ return (STATE.parametros && STATE.parametros[loja]) || {}; }
+// Migração: dados antigos não tinham loja. Tudo que já existe é da Burguer FC (foi o que o
+// Lucas importou). Roda sozinha e é idempotente — só age em registros ainda sem loja.
+const LOJA_LEGADO = "burguer";
+let _migrandoPrec = false;
+function migrarPrecParaLojas(){
+  if(_migrandoPrec) return; _migrandoPrec = true;
+  try{
+    ["insumos","produtos","custos"].forEach(col=>{
+      Object.entries(STATE[col]||{}).forEach(([id,v])=>{ if(v && typeof v==="object" && !v.loja){ DB.update(col+"/"+id,{loja:LOJA_LEGADO}); } });
+    });
+    const pp = STATE.parametros||{};
+    const ehFlat = ["faturamentoMedio","lucroDesejado","taxaImposto","taxaIfood","percentualCustoFixo","percentualCustoVariavel"].some(k=>k in pp);
+    if(ehFlat){ const flat={}; ["faturamentoMedio","lucroDesejado","taxaImposto","taxaIfood","percentualCustoFixo","percentualCustoVariavel"].forEach(k=>{ if(k in pp) flat[k]=pp[k]; }); DB.set("parametros",{[LOJA_LEGADO]:flat}); }
+  } finally { _migrandoPrec = false; }
+}
+function insumoPorNome(nome, loja){ const n=norm(nome); return obj2arr(STATE.insumos).find(i=>norm(i.nome)===n && (loja==null||(i.loja||"")===loja))||null; }
 function cmvProduto(prod){
   // Com ficha técnica: soma custo unitário × quantidade. Sem ficha (produto importado da
   // RELAÇÃO DE PRODUTOS ou cadastrado direto): usa o CMV salvo em cmvManual.
+  // Os insumos da ficha são procurados dentro da MESMA loja do produto.
   if(prod.ficha && prod.ficha.length){
     return prod.ficha.reduce((t,it)=>{
-      const ins = it.insumoNome? insumoPorNome(it.insumoNome) : (it.insumoId? Object.assign({_id:it.insumoId},STATE.insumos[it.insumoId]) : null);
+      const ins = it.insumoNome? insumoPorNome(it.insumoNome, prod.loja) : (it.insumoId? Object.assign({_id:it.insumoId},STATE.insumos[it.insumoId]) : null);
       const cu = ins? custoUnitario(ins) : num(it.valorUnit);
       return t + cu*num(it.quantidade);
     },0);
   }
   return num(prod.cmvManual);
 }
-/* % de custo fixo/variável CALCULADOS sobre o faturamento (igual planilha). Imposto entra no variável. */
-function parametrosResolvidos(){
-  const p = STATE.parametros||{};
+/* % de custo fixo/variável CALCULADOS sobre o faturamento (igual planilha). Imposto entra no variável.
+   Recebe a loja: usa os parâmetros e custos daquela loja. */
+function parametrosResolvidos(loja){
+  const p = paramsDaLoja(loja);
   const fat = num(p.faturamentoMedio);
-  const custos = obj2arr(STATE.custos);
+  const custos = custosDaLoja(loja);
   const somaFixo = custos.filter(c=>c.tipo==="FIXO").reduce((s,c)=>s+num(c.valor),0);
   const somaVar  = custos.filter(c=>c.tipo==="VARIAVEL").reduce((s,c)=>s+num(c.valor),0);
   const pcfManual = p.percentualCustoFixo, pcvManual = p.percentualCustoVariavel;
@@ -420,7 +452,7 @@ function precificar(cmv, p, precoAtual){
 /* Resumo completo de um produto — espelha o bloco "RESUMO PRECIFICAÇÃO" da planilha.
    Tudo calculado como % do preço (atual): lucro% = 100 − CMV% − %custoFixo − %custoVariável. */
 function resumoProduto(prod){
-  const p = parametrosResolvidos();
+  const p = parametrosResolvidos(prod.loja);
   const cmv = cmvProduto(prod);
   const precoAtual = num(prod.precoAtual);
   const mk = calcularMarkup(p,false);
@@ -549,7 +581,7 @@ function render(){
   if(!sessaoValida()) return;
   const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
-  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo"].includes(paginaAtual);
+  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos"].includes(paginaAtual);
   const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
       <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
       ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}
@@ -1094,11 +1126,11 @@ function renderVendas(el){
 /* ===================== RENTABILIDADE POR PRODUTO (Fase 2) =============== */
 // Liga o nome do item vendido (Cardápio Web) ao produto da ficha técnica.
 // 1) vínculo manual salvo em config.vinculoProdutos; 2) nome idêntico (normalizado).
-function produtoDoItem(nomeSnapshot){
+function produtoDoItem(nomeSnapshot, loja){
   const n=norm(nomeSnapshot);
   const mapa=(STATE.config&&STATE.config.vinculoProdutos)||{};
-  if(mapa[n] && STATE.produtos[mapa[n]]) return Object.assign({_id:mapa[n]}, STATE.produtos[mapa[n]]);
-  return obj2arr(STATE.produtos).find(p=>norm(p.nome)===n) || null;
+  if(mapa[n] && STATE.produtos[mapa[n]]){ const pr=STATE.produtos[mapa[n]]; if(loja==null||(pr.loja||"")===loja) return Object.assign({_id:mapa[n]}, pr); }
+  return obj2arr(STATE.produtos).find(p=>norm(p.nome)===n && (loja==null||(p.loja||"")===loja)) || null;
 }
 function vincularProduto(nomeNorm, produtoId){
   const mapa=Object.assign({}, (STATE.config&&STATE.config.vinculoProdutos)||{});
@@ -1113,7 +1145,7 @@ function renderRentabilidade(el){
   // agrega por produto vinculado (ou pelo nome, quando sem vínculo)
   const ag={}, semVinc={};
   vendas.forEach(v=>(v.itens||[]).forEach(it=>{
-    const prod=produtoDoItem(it.nomeSnapshot);
+    const prod=produtoDoItem(it.nomeSnapshot,v.loja);
     const q=num(it.quantidade), receita=num(it.precoUnitario)*q-num(it.descontoItem);
     const cmvUnit = num(it.cmvUnitarioSnapshot)>0? num(it.cmvUnitarioSnapshot) : (prod? cmvProduto(prod):0);
     const chave = prod? prod._id : ("x_"+norm(it.nomeSnapshot));
@@ -1131,7 +1163,8 @@ function renderRentabilidade(el){
     if(av&&!am) return {t:"Atenção",c:"b-gold"}; return {t:"Reprecificar",c:"b-red"}; };
   linhas.sort((a,b)=>b.margem-a.margem);
   const pend=Object.keys(semVinc).sort((a,b)=>semVinc[b]-semVinc[a]);
-  const optProd=obj2arr(STATE.produtos).sort((a,b)=>(a.nome||"").localeCompare(b.nome||"")).map(p=>`<option value="${p._id}">${esc(p.nome)}</option>`).join("");
+  const prodsVinc=(lojaFiltro!=="todos"?produtosDaLoja(lojaFiltro):obj2arr(STATE.produtos));
+  const optProd=prodsVinc.sort((a,b)=>(a.nome||"").localeCompare(b.nome||"")).map(p=>`<option value="${p._id}">${esc(p.nome)}${p.loja?(' · '+esc(lojaNome(p.loja))):''}</option>`).join("");
   const top=linhas.filter(p=>p.vinc).slice(0,8);
   const recTot=linhas.reduce((s,p)=>s+p.receita,0), margTot=linhas.reduce((s,p)=>s+p.margem,0);
   el.innerHTML=`
@@ -1163,7 +1196,7 @@ function renderRentabilidade(el){
 }
 
 /* CMV (snapshot) de uma venda inteira. */
-function cmvDaVenda(v){ return (v.itens||[]).reduce((t,it)=>{ const p=produtoDoItem(it.nomeSnapshot); const cu=num(it.cmvUnitarioSnapshot)>0?num(it.cmvUnitarioSnapshot):(p?cmvProduto(p):0); return t+cu*num(it.quantidade); },0); }
+function cmvDaVenda(v){ return (v.itens||[]).reduce((t,it)=>{ const p=produtoDoItem(it.nomeSnapshot,v.loja); const cu=num(it.cmvUnitarioSnapshot)>0?num(it.cmvUnitarioSnapshot):(p?cmvProduto(p):0); return t+cu*num(it.quantidade); },0); }
 
 /* ===================== RESULTADO POR CANAL (Fase 2) ===================== */
 function renderCanalResultado(el){
@@ -1483,7 +1516,9 @@ function removerUsuario(id){ if(confirm("Excluir este usuário?")){ DB.remove("u
 /* ===================== PRECIFICAÇÃO ======================================= */
 let abaPrec = "precos";
 function renderPrecificacao(el){
-  document.getElementById("pgSub").textContent = "CMV, markup e preço sugerido (cardápio e iFood). Importe sua planilha para começar.";
+  const loja=lojaPrecAtual();
+  if(!loja){ document.getElementById("pgSub").textContent="CMV, markup e preço sugerido — cada loja tem a sua precificação."; el.innerHTML=bannerEscolherLoja("A precificação é separada por loja (Burguer FC e Pizza FC têm dados diferentes). Escolha a loja:"); return; }
+  document.getElementById("pgSub").textContent = `Precificação de ${lojaNome(loja)} · CMV, markup e preço sugerido (cardápio e iFood).`;
   const abas = [["precos","Tabela de preços"],["produtos","Produtos"],["insumos","Insumos"],["parametros","Parâmetros"],["importar","Importar Excel"]];
   el.innerHTML = `<div class="tabs">${abas.map(([id,l])=>`<button class="${id===abaPrec?'active':''}" onclick="abaPrec='${id}';render()">${l}</button>`).join("")}</div><div id="abaConteudo"></div>`;
   const c = document.getElementById("abaConteudo");
@@ -1494,9 +1529,10 @@ function renderPrecificacao(el){
   if(abaPrec==="importar") return precAbaImportar(c);
 }
 function precAbaPrecos(c){
-  const p = parametrosResolvidos();
+  const loja = lojaPrecAtual();
+  const p = parametrosResolvidos(loja);
   const mk = calcularMarkup(p,false);
-  const prods = obj2arr(STATE.produtos);
+  const prods = produtosDaLoja(loja);
   c.innerHTML = `
     <div class="grid g4" style="margin-bottom:14px">
       <div class="stat"><div class="lbl">Markup geral</div><div class="val gold">${mk?('×'+mk.toFixed(2)):'—'}</div><div class="hint">100 ÷ (100 − custos − lucro)</div></div>
@@ -1519,7 +1555,8 @@ function precAbaPrecos(c){
     </div></div>`;
 }
 function precAbaInsumos(c){
-  const ins = obj2arr(STATE.insumos).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  const loja = lojaPrecAtual();
+  const ins = insumosDaLoja(loja).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
   c.innerHTML = `
     <div class="card"><div class="hd"><h3>Novo insumo</h3></div><div class="bd">
       <div class="row">
@@ -1536,11 +1573,12 @@ function precAbaInsumos(c){
     }</tbody></table>` : `<div class="empty">Nenhum insumo ainda.</div>`}
     </div></div>`;
 }
-function addInsumo(){ const nome=val("i_nome"); if(!nome) return toast("Informe o nome do insumo."); DB.push("insumos",{nome,quantidadeCompra:num(val("i_qtd"))||1,unidade:val("i_un")||"un",valorCompra:num(val("i_val"))}); toast("Insumo adicionado."); }
+function addInsumo(){ const loja=lojaPrecAtual(); if(!loja) return toast("Selecione a loja no topo."); const nome=val("i_nome"); if(!nome) return toast("Informe o nome do insumo."); DB.push("insumos",{loja,nome,quantidadeCompra:num(val("i_qtd"))||1,unidade:val("i_un")||"un",valorCompra:num(val("i_val"))}); toast("Insumo adicionado."); }
 function removerInsumo(id){ if(confirm("Excluir insumo?")){ DB.remove("insumos/"+id); } }
 function precAbaProdutos(c){
-  const prods = obj2arr(STATE.produtos).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
-  const p = parametrosResolvidos();
+  const loja = lojaPrecAtual();
+  const prods = produtosDaLoja(loja).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  const p = parametrosResolvidos(loja);
   c.innerHTML = `
     <div class="card"><div class="hd"><h3>Novo produto</h3><p>Cadastre o produto e depois monte a ficha técnica (insumos × quantidade).</p></div><div class="bd">
       <div class="row">
@@ -1570,7 +1608,7 @@ function precAbaProdutos(c){
         <div class="hr"></div>
         <div class="small muted" style="margin-bottom:6px">Ficha técnica (edite a quantidade e o custo unitário; o total recalcula sozinho)</div>
         ${(pr.ficha&&pr.ficha.length)? `<table><thead><tr><th>Insumo</th><th class="r">Qtd</th><th class="r">Custo unit.</th><th class="r">Total</th><th></th></tr></thead><tbody>${
-          pr.ficha.map((it,idx)=>{ const ins=it.insumoNome?insumoPorNome(it.insumoNome):null; const cu=ins?custoUnitario(ins):num(it.valorUnit);
+          pr.ficha.map((it,idx)=>{ const ins=it.insumoNome?insumoPorNome(it.insumoNome,pr.loja):null; const cu=ins?custoUnitario(ins):num(it.valorUnit);
             return `<tr><td>${esc(it.insumoNome||(ins&&ins.nome)||"—")}</td>
               <td class="r"><input class="precoEdit" style="width:80px" inputmode="decimal" value="${String(num(it.quantidade)).replace('.',',')}" onblur="editarFicha('${pr._id}',${idx},'quantidade',this.value)"></td>
               <td class="r">${ins? `<span class="muted" title="vem do cadastro do insumo">${reais(cu)}</span>` : `<input class="precoEdit" style="width:90px" inputmode="decimal" value="${String(num(it.valorUnit)).replace('.',',')}" onblur="editarFicha('${pr._id}',${idx},'valorUnit',this.value)">`}</td>
@@ -1585,10 +1623,10 @@ function precAbaProdutos(c){
         </div>
       </div>`;
     }).join("") : `<div class="empty">Nenhum produto ainda.</div>`}
-    <datalist id="insList">${obj2arr(STATE.insumos).map(i=>`<option value="${esc(i.nome)}">`).join("")}</datalist>
+    <datalist id="insList">${insumosDaLoja(loja).map(i=>`<option value="${esc(i.nome)}">`).join("")}</datalist>
     </div></div>`;
 }
-function addProduto(){ const nome=val("p_nome"); if(!nome) return toast("Informe o nome do produto."); DB.push("produtos",{nome,precoAtual:num(val("p_preco"))||null,ficha:[]}); toast("Produto adicionado."); }
+function addProduto(){ const loja=lojaPrecAtual(); if(!loja) return toast("Selecione a loja no topo."); const nome=val("p_nome"); if(!nome) return toast("Informe o nome do produto."); DB.push("produtos",{loja,nome,precoAtual:num(val("p_preco"))||null,ficha:[]}); toast("Produto adicionado."); }
 function removerProduto(id){ if(confirm("Excluir produto?")){ DB.remove("produtos/"+id); } }
 function salvarPrecoAtual(id,v){ DB.update("produtos/"+id,{precoAtual:num(v)||null}); toast("Preço atualizado."); }
 function addFicha(pid){ const nome=val("fi_nome_"+pid), q=num(val("fi_qtd_"+pid)); if(!nome||q<=0) return toast("Preencha insumo e quantidade."); const pr=STATE.produtos[pid]; const ficha=(pr.ficha||[]).concat([{insumoNome:nome,quantidade:q}]); DB.update("produtos/"+pid,{ficha}); toast("Item adicionado à ficha."); }
@@ -1599,8 +1637,9 @@ function editarFicha(pid,idx,campo,valor){
   DB.update("produtos/"+pid,{ficha}); toast("Ficha atualizada.");
 }
 function precAbaParametros(c){
-  const p=STATE.parametros||{};
-  c.innerHTML = `<div class="card"><div class="hd"><h3>Parâmetros de precificação</h3><p>Faturamento médio do mês, lucro desejado, imposto e taxa do iFood. Os % de custo são calculados sozinhos a partir das suas despesas; você pode forçar um % se quiser.</p></div><div class="bd">
+  const loja = lojaPrecAtual();
+  const p = paramsDaLoja(loja);
+  c.innerHTML = `<div class="card"><div class="hd"><h3>Parâmetros de precificação — ${esc(lojaNome(loja))}</h3><p>Faturamento médio do mês, lucro desejado, imposto e taxa do iFood. Os % de custo são calculados sozinhos a partir das suas despesas; você pode forçar um % se quiser. Estes parâmetros valem só para esta loja.</p></div><div class="bd">
     <div class="row">
       <div><label class="f">Faturamento médio mensal (R$)</label><input id="pa_fat" inputmode="decimal" value="${p.faturamentoMedio??''}"></div>
       <div><label class="f">Lucro desejado (%)</label><input id="pa_lucro" inputmode="decimal" value="${p.lucroDesejado??''}"></div>
@@ -1618,19 +1657,22 @@ function precAbaParametros(c){
   </div></div>`;
 }
 function salvarParametros(){
-  DB.set("parametros",{
+  const loja=lojaPrecAtual(); if(!loja) return toast("Selecione a loja no topo.");
+  DB.set("parametros/"+loja,{
     faturamentoMedio:num(val("pa_fat")), lucroDesejado:num(val("pa_lucro")), taxaImposto:num(val("pa_imp")), taxaIfood:num(val("pa_ifood")),
     percentualCustoFixo: val("pa_cf")===""?null:num(val("pa_cf")), percentualCustoVariavel: val("pa_cv")===""?null:num(val("pa_cv")),
   });
-  toast("Parâmetros salvos.");
+  toast("Parâmetros de "+lojaNome(loja)+" salvos.");
 }
 
 /* ===================== CUSTOS FIXOS E VARIÁVEIS =========================== */
 function renderCustos(el){
-  document.getElementById("pgSub").textContent = "Custos do mês. Os % são calculados sobre o faturamento médio e alimentam a precificação.";
-  const p = STATE.parametros||{};
-  const pr = parametrosResolvidos();
-  const custos = obj2arr(STATE.custos);
+  const loja=lojaPrecAtual();
+  if(!loja){ document.getElementById("pgSub").textContent="Custos fixos e variáveis — separados por loja."; el.innerHTML=bannerEscolherLoja("Os custos são separados por loja. Escolha qual loja você quer ver/editar:"); return; }
+  document.getElementById("pgSub").textContent = `Custos de ${lojaNome(loja)}. Os % são calculados sobre o faturamento médio e alimentam a precificação.`;
+  const p = paramsDaLoja(loja);
+  const pr = parametrosResolvidos(loja);
+  const custos = custosDaLoja(loja);
   const fixos = custos.filter(c=>c.tipo==="FIXO");
   const vars  = custos.filter(c=>c.tipo==="VARIAVEL");
   const totFixo = fixos.reduce((s,c)=>s+num(c.valor),0);
@@ -1664,10 +1706,11 @@ function renderCustos(el){
     </div></div>`;
 }
 function addCusto(tipo){
+  const loja=lojaPrecAtual(); if(!loja) return toast("Selecione a loja no topo.");
   const pre = tipo==="FIXO"?"cf":"cv";
   const desc=val(pre+"_desc"), valor=num(val(pre+"_val"));
   if(!desc||valor<=0) return toast("Preencha descrição e valor.");
-  DB.push("custos",{tipo,categoria: tipo==="FIXO"?"GERAIS":"OUTROS",descricao:desc,valor});
+  DB.push("custos",{loja,tipo,categoria: tipo==="FIXO"?"GERAIS":"OUTROS",descricao:desc,valor});
   toast("Custo adicionado.");
 }
 function removerCusto(id){ if(confirm("Excluir este custo?")){ DB.remove("custos/"+id); } }
@@ -1737,20 +1780,25 @@ function renderDRE(el){
 
 /* ===================== IMPORTAR EXCEL (planilha Delivery Lucrativo) ======== */
 function precAbaImportar(c){
-  const ins=Object.keys(STATE.insumos||{}).length, prod=Object.keys(STATE.produtos||{}).length, cst=Object.keys(STATE.custos||{}).length;
-  c.innerHTML = `<div class="card"><div class="hd"><h3>Importar planilha "Delivery Lucrativo"</h3><p>Selecione o arquivo .xlsx. Tudo é lido no seu navegador. Ao importar, a precificação atual é substituída pela da planilha.</p></div><div class="bd">
+  const loja=lojaPrecAtual();
+  const ins=insumosDaLoja(loja).length, prod=produtosDaLoja(loja).length, cst=custosDaLoja(loja).length;
+  c.innerHTML = `<div class="card"><div class="hd"><h3>Importar planilha "Delivery Lucrativo" — ${esc(lojaNome(loja))}</h3><p>Selecione o arquivo .xlsx desta loja. Tudo é lido no seu navegador. Ao importar, a precificação <b>de ${esc(lojaNome(loja))}</b> é substituída pela da planilha — a outra loja não é afetada.</p></div><div class="bd">
     <input type="file" id="arq" accept=".xlsx,.xls"/>
     <div id="previa" style="margin-top:14px"></div>
   </div></div>
-  <div class="card" style="margin-top:14px;border-color:#f3b8b8"><div class="hd"><h3>Apagar dados de precificação</h3><p>Hoje há ${ins} insumo(s), ${prod} produto(s) e ${cst} custo(s). Use isto para limpar uma importação errada e começar do zero. <b>Não afeta o caixa</b> (entradas/saídas).</p></div><div class="bd">
-    <button class="btn red" onclick="limparPrecificacao()">Apagar insumos, produtos e custos</button>
+  <div class="card" style="margin-top:14px;border-color:#f3b8b8"><div class="hd"><h3>Apagar dados de precificação de ${esc(lojaNome(loja))}</h3><p>Hoje ${esc(lojaNome(loja))} tem ${ins} insumo(s), ${prod} produto(s) e ${cst} custo(s). Use isto para limpar uma importação errada e começar do zero. <b>Não afeta o caixa</b> (entradas/saídas) nem a outra loja.</p></div><div class="bd">
+    <button class="btn red" onclick="limparPrecificacao()">Apagar precificação de ${esc(lojaNome(loja))}</button>
   </div></div>`;
   document.getElementById("arq").addEventListener("change", lerExcel);
 }
+// Mantém os registros das OUTRAS lojas e devolve um objeto só com eles (para substituir só a loja ativa).
+function _semLoja(col, loja){ const o={}; Object.entries(STATE[col]||{}).forEach(([id,v])=>{ if(v && (v.loja||"")!==loja) o[id]=v; }); return o; }
 function limparPrecificacao(){
-  if(!confirm("Apagar TODOS os dados de precificação (insumos, produtos e custos)?\nAs entradas e saídas do caixa NÃO são afetadas.")) return;
-  DB.set("insumos",{}); DB.set("produtos",{}); DB.set("custos",{});
-  toast("Dados de precificação apagados. Pode importar de novo.");
+  const loja=lojaPrecAtual(); if(!loja) return toast("Selecione a loja no topo.");
+  if(!confirm("Apagar a precificação de "+lojaNome(loja)+" (insumos, produtos e custos)?\nA outra loja e o caixa (entradas/saídas) NÃO são afetados.")) return;
+  DB.set("insumos",_semLoja("insumos",loja)); DB.set("produtos",_semLoja("produtos",loja)); DB.set("custos",_semLoja("custos",loja));
+  DB.remove("parametros/"+loja);
+  toast("Precificação de "+lojaNome(loja)+" apagada. Pode importar de novo.");
   setTimeout(render,200);
 }
 function lerExcel(ev){
@@ -1776,17 +1824,20 @@ function lerExcel(ev){
 }
 function aplicarImport(){
   const d=window._importPrevia; if(!d) return;
+  const loja=lojaPrecAtual(); if(!loja) return toast("Selecione a loja no topo antes de importar.");
   // Insumos extras (que só aparecem na ficha): cria com custo da própria ficha.
   const nomes=new Set(d.insumos.map(i=>norm(i.nome)));
   const extras=[];
   d.produtos.forEach(p=>p.itens.forEach(it=>{ if(!nomes.has(norm(it.insumoNome))){ nomes.add(norm(it.insumoNome)); extras.push({nome:it.insumoNome,quantidadeCompra:1,unidade:"un",valorCompra:it.valorUnit}); } }));
-  const insumosObj={}, produtosObj={}, custosObj={};
-  [...d.insumos,...extras].forEach((i,k)=>insumosObj["i"+k]={nome:i.nome,quantidadeCompra:i.quantidadeCompra,unidade:i.unidade||"un",valorCompra:i.valorCompra});
-  d.produtos.forEach((p,k)=>produtosObj["p"+k]={nome:p.nome,precoAtual:p.precoAtual,cmvManual:(p.cmvManual!=null?p.cmvManual:null),ficha:(p.itens||[]).map(it=>({insumoNome:it.insumoNome,quantidade:it.quantidade,valorUnit:it.valorUnit}))});
-  d.custos.forEach((c2,k)=>custosObj["c"+k]={tipo:c2.tipo,categoria:c2.categoria,descricao:c2.descricao,valor:c2.valor});
+  // Começa dos registros das OUTRAS lojas (preserva) e adiciona os desta loja com chaves prefixadas.
+  const insumosObj=_semLoja("insumos",loja), produtosObj=_semLoja("produtos",loja), custosObj=_semLoja("custos",loja);
+  [...d.insumos,...extras].forEach((i,k)=>insumosObj[loja+"_i"+k]={loja,nome:i.nome,quantidadeCompra:i.quantidadeCompra,unidade:i.unidade||"un",valorCompra:i.valorCompra});
+  d.produtos.forEach((p,k)=>produtosObj[loja+"_p"+k]={loja,nome:p.nome,precoAtual:p.precoAtual,cmvManual:(p.cmvManual!=null?p.cmvManual:null),ficha:(p.itens||[]).map(it=>({insumoNome:it.insumoNome,quantidade:it.quantidade,valorUnit:it.valorUnit}))});
+  d.custos.forEach((c2,k)=>custosObj[loja+"_c"+k]={loja,tipo:c2.tipo,categoria:c2.categoria,descricao:c2.descricao,valor:c2.valor});
   DB.set("insumos",insumosObj); DB.set("produtos",produtosObj); DB.set("custos",custosObj);
-  DB.set("parametros",Object.assign({},STATE.parametros,{faturamentoMedio:d.parametros.faturamentoMedio,lucroDesejado:d.parametros.lucroDesejado,taxaImposto:d.parametros.taxaImposto,taxaIfood:d.parametros.taxaIfood||(STATE.parametros&&STATE.parametros.taxaIfood)||23}));
-  toast("Planilha importada com sucesso!"); abaPrec="precos"; render();
+  const pAnt=paramsDaLoja(loja);
+  DB.set("parametros/"+loja,{faturamentoMedio:d.parametros.faturamentoMedio,lucroDesejado:d.parametros.lucroDesejado,taxaImposto:d.parametros.taxaImposto,taxaIfood:d.parametros.taxaIfood||pAnt.taxaIfood||23});
+  toast("Planilha de "+lojaNome(loja)+" importada com sucesso!"); abaPrec="precos"; render();
 }
 
 /* ====== PARSER DA PLANILHA (portado de importacaoPlanilha.ts do Audens) ==== */
@@ -2026,11 +2077,13 @@ function limparFirebase(){ localStorage.removeItem("fc_firebase_cfg"); toast("Mo
 function boot(){
   DB.init();
   const bind = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; if(sessaoValida()) render(); });
-  bind("insumos","insumos");
-  bind("produtos","produtos");
+  // Coleções de precificação: ao chegarem, rodam a migração por loja (idempotente).
+  const bindPrec = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
+  bindPrec("insumos","insumos");
+  bindPrec("produtos","produtos");
   bind("caixa/saidas","saidas");
   bind("caixa/entradas","entradas");
-  bind("custos","custos");
+  bindPrec("custos","custos");
   bind("contas","contas");
   bind("receber","receber");
   bind("tarefas","tarefas");
@@ -2038,7 +2091,7 @@ function boot(){
   bind("vendas","vendas");
   bind("canais","canais");
   bind("metas","metas");
-  DB.list("parametros", v=>{ STATE.parametros = v||{}; if(sessaoValida()) render(); });
+  DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
 }
