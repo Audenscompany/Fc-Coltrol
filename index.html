@@ -727,6 +727,20 @@ function renderEntradas(el){
     <div class="small muted" style="margin-top:8px">Cada forma com valor vira uma entrada datada no fim do mês escolhido. Repita para cada mês/estabelecimento.</div>
   </div></div>
 
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Importar histórico do Cardápio Web (automático)</h3><p>Puxa o faturamento direto da API, mês a mês, por loja. Requer a função publicada e a API Key de cada loja configurada na função.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">URL da função</label><input id="cwh_url" value="${esc((STATE.config&&STATE.config.funcaoUrl)||'')}" placeholder="https://fc-control-....run.app"></div>
+      <div><label class="f">Segredo (CARDAPIOWEB_WEBHOOK_SECRET)</label><input id="cwh_secret" value="${esc((STATE.config&&STATE.config.cwSecret)||'')}" placeholder="fc2026cardapio"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Estabelecimento</label><select id="cwh_loja">${optLoja}</select></div>
+      <div><label class="f">De (mês)</label><input type="month" id="cwh_de"></div>
+      <div><label class="f">Até (mês)</label><input type="month" id="cwh_ate" value="${mesAtual()}"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="importarHistoricoCW()">Importar histórico</button></div>
+    </div>
+    <div id="cwh_log" class="small muted" style="margin-top:10px"></div>
+  </div></div>
+
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Entradas (${ent.length})</h3></div><div class="bd">
     ${ent.length? tabela(["Data","Loja","Forma","Bruto","Taxa","Líquido","Descrição",""], ent.map(e=>[
       fmtData(e.data), `<span class="pill">${esc(lojaNome(e.loja))}</span>`, formaLabel(e.forma), reais(e.valor), pct(e.taxaPerc),
@@ -747,6 +761,26 @@ function importarFaturamento(){
   }}
   if(n===0) return toast("Preencha pelo menos uma forma de pagamento.");
   toast(`Faturamento de ${fmtMesLabel(ym)} lançado (${n} forma(s)).`);
+}
+function mesesEntre(de,ate){ const out=[]; let d=new Date(de+"-01T00:00:00"); const f=new Date((ate||de)+"-01T00:00:00"); let g=0; while(d<=f && g<60){ out.push(d.toISOString().slice(0,7)); d.setMonth(d.getMonth()+1); g++; } return out; }
+async function importarHistoricoCW(){
+  const url=(val("cwh_url")||"").replace(/\/+$/,""), secret=val("cwh_secret"), loja=val("cwh_loja"), de=val("cwh_de"), ate=val("cwh_ate")||mesAtual();
+  if(!url) return toast("Informe a URL da função.");
+  if(!de) return toast("Informe o mês inicial.");
+  DB.update("config",{funcaoUrl:url,cwSecret:secret});
+  const meses=mesesEntre(de,ate); const log=document.getElementById("cwh_log");
+  log.innerHTML="Importando "+meses.length+" mês(es)… (pode demorar conforme o volume)";
+  for(const mes of meses){
+    log.innerHTML+=`<br>${fmtMesLabel(mes)}: buscando…`;
+    try{
+      const r=await fetch(`${url}?fonte=cw-historico&loja=${encodeURIComponent(loja)}&mes=${mes}&secret=${encodeURIComponent(secret)}`);
+      const j=await r.json().catch(()=>({}));
+      if(j&&j.ok){ const tot=Object.values(j.porForma||{}).reduce((a,b)=>a+b,0); log.innerHTML+=` ✓ ${j.pedidos||0} pedidos · ${reais(tot)}`; }
+      else log.innerHTML+=` — erro: ${esc((j&&j.erro)||("HTTP "+r.status))}`;
+    }catch(e){ log.innerHTML+=` — falha de conexão (a função respondeu? CORS?)`; }
+  }
+  log.innerHTML+="<br><b>Concluído.</b> As entradas aparecem na lista abaixo e no Dashboard.";
+  toast("Importação do histórico concluída.");
 }
 function renderSaidas(el){
   document.getElementById("pgSub").textContent = "Pagamentos e gastos. Comprovantes do WhatsApp aparecem aqui para confirmar.";
