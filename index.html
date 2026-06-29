@@ -1126,16 +1126,20 @@ function renderVendas(el){
 /* ===================== RENTABILIDADE POR PRODUTO (Fase 2) =============== */
 // Liga o nome do item vendido (Cardápio Web) ao produto da ficha técnica.
 // 1) vínculo manual salvo em config.vinculoProdutos; 2) nome idêntico (normalizado).
+// Chave segura para o Firebase: nome normalizado SEM os caracteres proibidos em chaves
+// (/ . # $ [ ] e aspas). É a chave usada no mapa config.vinculoProdutos.
+function chaveVinc(s){ return norm(s).replace(/[.#$/\[\]'"]/g,"_"); }
 function produtoDoItem(nomeSnapshot, loja){
   const n=norm(nomeSnapshot);
   const mapa=(STATE.config&&STATE.config.vinculoProdutos)||{};
-  if(mapa[n] && STATE.produtos[mapa[n]]){ const pr=STATE.produtos[mapa[n]]; if(loja==null||(pr.loja||"")===loja) return Object.assign({_id:mapa[n]}, pr); }
+  const k=chaveVinc(nomeSnapshot);
+  if(mapa[k] && STATE.produtos[mapa[k]]){ const pr=STATE.produtos[mapa[k]]; if(loja==null||(pr.loja||"")===loja) return Object.assign({_id:mapa[k]}, pr); }
   return obj2arr(STATE.produtos).find(p=>norm(p.nome)===n && (loja==null||(p.loja||"")===loja)) || null;
 }
-function vincularProduto(nomeNorm, produtoId){
+function vincularProduto(chave, produtoId){
   const mapa=Object.assign({}, (STATE.config&&STATE.config.vinculoProdutos)||{});
-  if(produtoId) mapa[nomeNorm]=produtoId; else delete mapa[nomeNorm];
-  DB.update("config",{vinculoProdutos:mapa}); toast("Vínculo salvo.");
+  if(produtoId) mapa[chave]=produtoId; else delete mapa[chave];
+  DB.update("config",{vinculoProdutos:mapa}); toast(produtoId?"Vínculo salvo.":"Vínculo removido.");
 }
 function mediana(arr){ if(!arr.length) return 0; const a=arr.slice().sort((x,y)=>x-y); const m=Math.floor(a.length/2); return a.length%2?a[m]:(a[m-1]+a[m])/2; }
 function renderRentabilidade(el){
@@ -1152,7 +1156,7 @@ function renderRentabilidade(el){
     const nome = prod? prod.nome : it.nomeSnapshot;
     if(!ag[chave]) ag[chave]={nome,qtd:0,receita:0,cmv:0,vinc:!!prod};
     ag[chave].qtd+=q; ag[chave].receita+=receita; ag[chave].cmv+=cmvUnit*q;
-    if(!prod){ const nn=norm(it.nomeSnapshot); semVinc[nn]=(semVinc[nn]||0)+q; }
+    if(!prod){ const k=chaveVinc(it.nomeSnapshot); if(!semVinc[k]) semVinc[k]={nome:norm(it.nomeSnapshot),qtd:0}; semVinc[k].qtd+=q; }
   }));
   let linhas=Object.values(ag).map(p=>{ p.margem=p.receita-p.cmv; p.margemPct=p.receita>0?p.margem/p.receita*100:0; return p; });
   // classificação estratégica
@@ -1162,7 +1166,7 @@ function renderRentabilidade(el){
     if(av&&am) return {t:"Estrela",c:"b-green"}; if(!av&&am) return {t:"Motor de lucro",c:"b-green"};
     if(av&&!am) return {t:"Atenção",c:"b-gold"}; return {t:"Reprecificar",c:"b-red"}; };
   linhas.sort((a,b)=>b.margem-a.margem);
-  const pend=Object.keys(semVinc).sort((a,b)=>semVinc[b]-semVinc[a]);
+  const pend=Object.keys(semVinc).sort((a,b)=>semVinc[b].qtd-semVinc[a].qtd);
   const prodsVinc=(lojaFiltro!=="todos"?produtosDaLoja(lojaFiltro):obj2arr(STATE.produtos));
   const optProd=prodsVinc.sort((a,b)=>(a.nome||"").localeCompare(b.nome||"")).map(p=>`<option value="${p._id}">${esc(p.nome)}${p.loja?(' · '+esc(lojaNome(p.loja))):''}</option>`).join("");
   const top=linhas.filter(p=>p.vinc).slice(0,8);
@@ -1174,8 +1178,8 @@ function renderRentabilidade(el){
     <div class="kpi"><div class="ic y">📦</div><div><div class="kl">Produtos vendidos</div><div class="kv">${linhas.filter(p=>p.vinc).length}</div><div class="kh">${pend.length} sem vínculo</div></div></div>
   </div>
   ${pend.length?`<div class="card" style="border-color:#f0d488;margin-bottom:14px"><div class="hd"><h3>🔗 Vincular produtos vendidos à ficha técnica (${pend.length})</h3><p>Estes nomes vieram do Cardápio Web e ainda não têm produto na Precificação. Vincule para entrar na margem.</p></div><div class="bd">
-    ${pend.map(nn=>`<div class="rz"><span><b>${esc(nn)}</b> <span class="muted">· ${semVinc[nn]} un.</span></span>
-      <span><select onchange="vincularProduto('${nn.replace(/'/g,"")}',this.value)"><option value="">— escolher produto —</option>${optProd}</select></span></div>`).join("")}
+    ${pend.map(k=>`<div class="rz"><span><b>${esc(semVinc[k].nome)}</b> <span class="muted">· ${semVinc[k].qtd} un.</span></span>
+      <span><select onchange="vincularProduto('${k}',this.value)"><option value="">— escolher produto —</option>${optProd}</select></span></div>`).join("")}
   </div></div>`:""}
   <div class="chart-grid" style="margin-top:0">
     <div class="card"><div class="hd"><h3>Top produtos por margem — ${fmtMesLabel(ym)}</h3></div><div class="bd"><div class="chart-box">${top.length?'<canvas id="chRent"></canvas>':'<div class="empty">Sem vendas vinculadas ainda.</div>'}</div></div></div>
