@@ -317,7 +317,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -506,8 +506,11 @@ function sugerirCategoria(texto){
 /* ----------------------------- Roteador ------------------------------------ */
 const PAGINAS = [
   {id:"dashboard",icon:"🏠",label:"Visão financeira",grupo:"VISÃO EXECUTIVA",render:renderDashboard},
+  {id:"metas",icon:"🎯",label:"Metas e projeções",grupo:"VISÃO EXECUTIVA",render:renderMetas},
+  {id:"alertas",icon:"🔔",label:"Alertas e plano de ação",grupo:"VISÃO EXECUTIVA",render:renderAlertas},
   {id:"vendas",icon:"🛒",label:"Vendas / Pedidos",grupo:"VENDAS E MARGEM",render:renderVendas},
   {id:"rentabilidade",icon:"📦",label:"Produtos e rentabilidade",grupo:"VENDAS E MARGEM",render:renderRentabilidade},
+  {id:"canalresultado",icon:"📡",label:"Resultado por canal",grupo:"VENDAS E MARGEM",render:renderCanalResultado},
   {id:"entradas",icon:"📥",label:"Entradas",grupo:"FINANCEIRO",render:renderEntradas},
   {id:"saidas",icon:"📤",label:"Saídas",grupo:"FINANCEIRO",render:renderSaidas},
   {id:"contas",icon:"🧾",label:"Contas a pagar",grupo:"FINANCEIRO",render:renderContas},
@@ -546,12 +549,12 @@ function render(){
   if(!sessaoValida()) return;
   const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
-  const comFiltro = ["dashboard","vendas","rentabilidade","entradas","saidas","contas","receber","tarefas","dre","fluxo"].includes(paginaAtual);
+  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo"].includes(paginaAtual);
   const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
       <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
       ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}
     </select></div>`;
-  const selMes = ["dashboard","vendas","rentabilidade"].includes(paginaAtual)? `<div class="tbfld"><label>Mês</label><input type="month" value="${mesRef}" onchange="setMesRef(this.value)"></div>` : "";
+  const selMes = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","dre"].includes(paginaAtual)? `<div class="tbfld"><label>Mês</label><input type="month" value="${mesRef}" onchange="setMesRef(this.value)"></div>` : "";
   const nm = `<div style="position:relative">
       <button class="btn cta" onclick="toggleNovaMov(event)">+ Nova movimentação</button>
       <div id="novaMovMenu" style="display:none;position:absolute;right:0;top:112%;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 10px 28px rgba(0,0,0,.14);z-index:30;min-width:200px;overflow:hidden">
@@ -670,11 +673,12 @@ function renderDashboard(el){
           contasAbertas.slice(0,5).map(c=>{const d=(c.vencimento||"").slice(8,10),mn=mesAbrev((c.vencimento||"").slice(5,7));return `<tr><td><span class="diabadge"><b>${d}</b><span>${mn}</span></span></td><td>${esc(c.descricao||"—")}</td><td><span class="tagcat">${catLabel(c.categoria)}</span></td><td class="r"><b>${reais(c.valor)}</b></td><td class="r"><button class="btn sm" onclick="pagarConta('${c._id}')">Pagar</button></td></tr>`;}).join("")
         }</tbody></table><div style="margin-top:10px;text-align:right"><a class="linkmais" onclick="irPara('contas')">Ver todas as contas a pagar →</a></div>` : `<div class="empty">Nenhuma conta a pagar em aberto. Use <a class="linkmais" onclick="irPara('contas')">Contas a pagar</a> para cadastrar.</div>`}
       </div></div>
-      <div class="card"><div class="hd"><h3>🔔 Alertas financeiros</h3></div><div class="bd">
-        ${alertas.map(a=>`<div class="alert ${a.t}"><div><div class="at">${esc(a.titulo)}</div><div class="ad">${esc(a.desc)}</div></div>${a.acao?`<button class="btn ghost sm" onclick="irPara('${a.pg}')">${esc(a.acao)}</button>`:""}</div>`).join("")}
-        <div style="margin-top:6px;text-align:right"><a class="linkmais" onclick="irPara('tarefas')">Ver todos os alertas →</a></div>
+      <div class="card"><div class="hd"><h3>🔔 Alertas e plano de ação</h3></div><div class="bd">
+        ${gerarAlertas(ym).slice(0,4).map(a=>`<div class="alert ${a.t}"><div><div class="at">${["","🔴 ","🟠 ","🟡 "][a.prio]||""}${esc(a.titulo)}</div><div class="ad">${esc(a.desc)}</div></div>${a.acao?`<button class="btn ghost sm" onclick="irPara('${a.pg}')">${esc(a.acao)}</button>`:""}</div>`).join("")}
+        <div style="margin-top:6px;text-align:right"><a class="linkmais" onclick="irPara('alertas')">Ver todos os alertas →</a></div>
       </div></div>
-    </div>`;
+    </div>
+    ${metaDashCard(ym)}`;
 
   destruirCharts();
   const G="#2f8a2c";
@@ -1158,6 +1162,157 @@ function renderRentabilidade(el){
   if(typeof Chart!=="undefined" && top.length){ const c=document.getElementById("chRent"); if(c) _charts.push(new Chart(c,{type:"bar",data:{labels:top.map(p=>p.nome),datasets:[{label:"Margem (R$)",data:top.map(p=>p.margem),backgroundColor:"#2f8a2c",borderRadius:6}]},options:{indexAxis:"y",responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>"R$ "+Number(v).toLocaleString("pt-BR")}}}}})); }
 }
 
+/* CMV (snapshot) de uma venda inteira. */
+function cmvDaVenda(v){ return (v.itens||[]).reduce((t,it)=>{ const p=produtoDoItem(it.nomeSnapshot); const cu=num(it.cmvUnitarioSnapshot)>0?num(it.cmvUnitarioSnapshot):(p?cmvProduto(p):0); return t+cu*num(it.quantidade); },0); }
+
+/* ===================== RESULTADO POR CANAL (Fase 2) ===================== */
+function renderCanalResultado(el){
+  document.getElementById("pgSub").textContent="Margem de contribuição por canal de venda — "+fmtMesLabel(mesRef);
+  const ym=mesRef;
+  const vendas=obj2arr(STATE.vendas).filter(v=>daLoja(v)&&noMes(v.data,ym)&&(v.status||"confirmado")==="confirmado");
+  const ag={};
+  vendas.forEach(v=>{ const k=v.canalId||"proprio"; if(!ag[k]) ag[k]={canal:canalNome(k),pedidos:0,bruto:0,desconto:0,taxaCanal:0,taxaPag:0,liquido:0,cmv:0};
+    ag[k].pedidos++; ag[k].bruto+=num(v.valorProdutosBruto)+num(v.freteCobrado); ag[k].desconto+=num(v.desconto);
+    ag[k].taxaCanal+=num(v.taxaCanalValor); ag[k].taxaPag+=num(v.taxaPagamentoValor); ag[k].liquido+=num(v.valorLiquido); ag[k].cmv+=cmvDaVenda(v); });
+  let linhas=Object.values(ag).map(c=>{ c.margem=c.liquido-c.cmv; c.margemPct=c.liquido>0?c.margem/c.liquido*100:0; c.ticket=c.pedidos?c.bruto/c.pedidos:0; return c; }).sort((a,b)=>b.liquido-a.liquido);
+  const totLiq=linhas.reduce((s,c)=>s+c.liquido,0), totMarg=linhas.reduce((s,c)=>s+c.margem,0), totPed=linhas.reduce((s,c)=>s+c.pedidos,0);
+  el.innerHTML=`
+  <div class="grid g4" style="margin-bottom:14px">
+    <div class="kpi"><div class="ic g">🧾</div><div><div class="kl">Pedidos</div><div class="kv">${totPed}</div></div></div>
+    <div class="kpi"><div class="ic b">↗</div><div><div class="kl">Receita líquida</div><div class="kv pos">${reais(totLiq)}</div></div></div>
+    <div class="kpi"><div class="ic g">$</div><div><div class="kl">Margem de contribuição</div><div class="kv">${reais(totMarg)}</div><div class="kh">${totLiq>0?pct(totMarg/totLiq*100):'—'}</div></div></div>
+    <div class="kpi"><div class="ic y">🏆</div><div><div class="kl">Melhor canal (margem)</div><div class="kv gold" style="font-size:20px">${esc(linhas[0]?linhas[0].canal:'—')}</div></div></div>
+  </div>
+  <div class="chart-grid">
+    <div class="card"><div class="hd"><h3>Receita líquida por canal</h3></div><div class="bd"><div class="chart-box">${linhas.length?'<canvas id="chCanalRec"></canvas>':'<div class="empty">Sem vendas no mês.</div>'}</div></div></div>
+    <div class="card"><div class="hd"><h3>Margem % por canal</h3></div><div class="bd"><div class="chart-box">${linhas.length?'<canvas id="chCanalMarg"></canvas>':'<div class="empty">Sem vendas no mês.</div>'}</div></div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><div class="hd"><h3>Detalhe por canal</h3><p>Margem de contribuição = receita líquida − CMV (sem rateio de custos fixos).</p></div><div class="bd">
+    ${linhas.length?tabela(["Canal","Pedidos","Ticket","Bruto","Taxas","Receita líq.","CMV","Margem contrib.","Margem %","Part.%"], linhas.map(c=>[
+      esc(c.canal), {r:true,h:String(c.pedidos)}, {r:true,h:reais(c.ticket)}, {r:true,h:reais(c.bruto)},
+      {r:true,h:`<span class="neg">${reais(c.taxaCanal+c.taxaPag)}</span>`}, {r:true,h:reais(c.liquido)}, {r:true,h:reais(c.cmv)},
+      {r:true,h:`<b class="${c.margem>=0?'pos':'neg'}">${reais(c.margem)}</b>`}, {r:true,h:c.liquido>0?pct(c.margemPct):'—'}, {r:true,h:totLiq>0?Math.round(c.liquido/totLiq*100)+"%":'—'}
+    ])):`<div class="empty">Sem vendas neste mês. Os canais aparecem conforme os pedidos do Cardápio Web entram.</div>`}
+  </div></div>`;
+  destruirCharts();
+  if(typeof Chart!=="undefined" && linhas.length){
+    const c1=document.getElementById("chCanalRec"); if(c1) _charts.push(new Chart(c1,{type:"doughnut",data:{labels:linhas.map(c=>c.canal),datasets:[{data:linhas.map(c=>c.liquido),backgroundColor:PAL_CAT,borderWidth:2,borderColor:"#fff"}]},options:{responsive:true,maintainAspectRatio:false,cutout:"60%",plugins:{legend:{position:"right"}}}}));
+    const c2=document.getElementById("chCanalMarg"); if(c2) _charts.push(new Chart(c2,{type:"bar",data:{labels:linhas.map(c=>c.canal),datasets:[{label:"Margem %",data:linhas.map(c=>c.margemPct),backgroundColor:"#2f8a2c",borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{ticks:{callback:v=>v+"%"}}}}}));
+  }
+}
+
+/* ===================== METAS, PROJEÇÃO E ALERTAS (Fase 3) =============== */
+function metaDe(ym,loja){ return STATE.metas[ym+"__"+loja]||null; }
+function metaAtual(ym){
+  if(lojaFiltro!=="todos") return metaDe(ym,lojaFiltro);
+  const ms=LOJAS.map(l=>metaDe(ym,l.id)).filter(Boolean); if(!ms.length) return null;
+  const soma=f=>ms.reduce((t,m)=>t+num(m[f]),0);
+  const media=f=>{const v=ms.map(m=>num(m[f])).filter(x=>x>0); return v.length?v.reduce((a,b)=>a+b,0)/v.length:0;};
+  return {faturamento:soma("faturamento"),lucroOperacional:soma("lucroOperacional"),marketingMax:soma("marketingMax"),
+    cmvMaxPerc:media("cmvMaxPerc"),margemContribPerc:media("margemContribPerc"),pessoalMaxPerc:media("pessoalMaxPerc"),ticketMedio:media("ticketMedio"),_consolidada:true};
+}
+function fatorProjecao(ym){
+  if(ym!==mesAtual()) return 1;
+  const dia=new Date(hojeISO()+"T00:00:00").getDate();
+  const [a,m]=ym.split("-").map(Number); const diasMes=new Date(a,m,0).getDate();
+  return dia>0?diasMes/dia:1;
+}
+function realizadoMes(ym){
+  const d=dreMes(ym);
+  const conf=obj2arr(STATE.vendas).filter(v=>daLoja(v)&&noMes(v.data,ym)&&(v.status||"confirmado")==="confirmado");
+  const pedidos=conf.length, ticket=pedidos?d.receitaBruta/pedidos:0;
+  return {faturamento:d.receitaBruta,receitaLiquida:d.receitaLiquida,lucro:d.resultado,
+    cmvPct:d.receitaLiquida>0?d.cmv/d.receitaLiquida*100:0, margemPct:d.receitaLiquida>0?d.margemContrib/d.receitaLiquida*100:0,
+    pedidos,ticket,pessoal:d.pessoal,marketing:d.marketing};
+}
+function statusInd(meta,proj,maiorMelhor){
+  if(!meta) return {t:"—",c:"b-gray"};
+  if(maiorMelhor){ if(proj>=meta) return {t:"Saudável",c:"b-green"}; if(proj>=0.9*meta) return {t:"Atenção",c:"b-gold"}; return {t:"Abaixo",c:"b-red"}; }
+  if(proj<=meta) return {t:"Saudável",c:"b-green"}; if(proj<=meta*1.05) return {t:"Atenção",c:"b-gold"}; return {t:"Crítico",c:"b-red"};
+}
+function indicadoresMeta(ym){
+  const meta=metaAtual(ym), R=realizadoMes(ym), f=fatorProjecao(ym); if(!meta) return null;
+  return [
+    {nome:"Faturamento",meta:meta.faturamento,real:R.faturamento,proj:R.faturamento*f,maior:true,fmt:reais},
+    {nome:"CMV (máx)",meta:meta.cmvMaxPerc,real:R.cmvPct,proj:R.cmvPct,maior:false,fmt:pct},
+    {nome:"Margem contribuição",meta:meta.margemContribPerc,real:R.margemPct,proj:R.margemPct,maior:true,fmt:pct},
+    {nome:"Lucro operacional",meta:meta.lucroOperacional,real:R.lucro,proj:R.lucro*f,maior:true,fmt:reais},
+    {nome:"Ticket médio",meta:meta.ticketMedio,real:R.ticket,proj:R.ticket,maior:true,fmt:reais},
+  ].filter(i=>i.meta>0);
+}
+// Card "Metas do mês" para o dashboard executivo (barra de progresso por indicador).
+function metaDashCard(ym){
+  const inds=indicadoresMeta(ym); if(!inds) return "";
+  const linha=i=>{
+    const s=statusInd(i.meta,i.proj,i.maior);
+    const prog=i.maior?(i.meta>0?Math.min(100,Math.max(0,i.real/i.meta*100)):0):(i.real>0?Math.min(100,i.meta/i.real*100):100);
+    const cor=s.c==="b-green"?"#2f8a2c":s.c==="b-gold"?"#c8911b":s.c==="b-red"?"#b81f1f":"#9aa";
+    return `<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span><b>${i.nome}</b> <span style="color:#778">· projeção ${i.fmt(i.proj)}</span></span><span class="badge ${s.c}">${s.t}</span></div>
+      <div style="height:8px;background:#eef0ee;border-radius:6px;overflow:hidden"><div style="height:100%;width:${prog.toFixed(0)}%;background:${cor}"></div></div>
+      <div style="font-size:11px;color:#889;margin-top:3px">Meta ${i.fmt(i.meta)} · realizado ${i.fmt(i.real)}</div></div>`;
+  };
+  return `<div class="card" style="margin-top:16px"><div class="hd" style="display:flex;justify-content:space-between;align-items:center"><h3>🎯 Metas do mês — ${fmtMesLabel(ym)}</h3><a class="linkmais" onclick="irPara('metas')">Ajustar metas →</a></div><div class="bd">${inds.map(linha).join("")}</div></div>`;
+}
+let metaLojaSel=null;
+function renderMetas(el){
+  document.getElementById("pgSub").textContent="Metas por loja e mês, acompanhamento do ritmo e projeção de fechamento — "+fmtMesLabel(mesRef);
+  const ym=mesRef;
+  if(!metaLojaSel) metaLojaSel = lojaFiltro!=="todos"?lojaFiltro:LOJAS[0].id;
+  const inds=indicadoresMeta(ym);
+  const mt=metaDe(ym,metaLojaSel)||{};
+  el.innerHTML=`
+  <div class="card"><div class="hd"><h3>Acompanhamento — ${lojaFiltro==="todos"?"Todas as lojas":esc(lojaNome(lojaFiltro))} · ${fmtMesLabel(ym)}</h3><p>Projeção pelo ritmo do mês (média diária × dias do mês).</p></div><div class="bd">
+    ${inds?`<table><thead><tr><th>Indicador</th><th class="r">Meta</th><th class="r">Realizado</th><th class="r">Projeção</th><th>Status</th></tr></thead><tbody>${
+      inds.map(i=>{const s=statusInd(i.meta,i.proj,i.maior);return `<tr><td>${i.nome}</td><td class="r">${i.fmt(i.meta)}</td><td class="r">${i.fmt(i.real)}</td><td class="r"><b>${i.fmt(i.proj)}</b></td><td><span class="badge ${s.c}">${s.t}</span></td></tr>`;}).join("")
+    }</tbody></table>`:`<div class="empty">Nenhuma meta definida para ${fmtMesLabel(ym)}. Defina abaixo.</div>`}
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Definir metas do mês</h3><p>As metas são por loja. Escolha a loja e o mês (seletor do topo).</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Loja</label><select id="mt_loja" onchange="metaLojaSel=this.value;render()">${LOJAS.map(l=>`<option value="${l.id}"${l.id===metaLojaSel?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+      <div><label class="f">Faturamento (R$)</label><input id="mt_fat" inputmode="decimal" value="${mt.faturamento??''}"></div>
+      <div><label class="f">CMV máx (%)</label><input id="mt_cmv" inputmode="decimal" value="${mt.cmvMaxPerc??''}"></div>
+      <div><label class="f">Margem contrib. (%)</label><input id="mt_margem" inputmode="decimal" value="${mt.margemContribPerc??''}"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Lucro operacional (R$)</label><input id="mt_lucro" inputmode="decimal" value="${mt.lucroOperacional??''}"></div>
+      <div><label class="f">Ticket médio (R$)</label><input id="mt_ticket" inputmode="decimal" value="${mt.ticketMedio??''}"></div>
+      <div><label class="f">Marketing máx (R$)</label><input id="mt_mkt" inputmode="decimal" value="${mt.marketingMax??''}"></div>
+      <div><label class="f">Pessoal máx (% receita)</label><input id="mt_pessoal" inputmode="decimal" value="${mt.pessoalMaxPerc??''}"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="salvarMeta()">Salvar metas de ${fmtMesLabel(ym)}</button>
+  </div></div>`;
+}
+function salvarMeta(){
+  const loja=val("mt_loja")||metaLojaSel, ym=mesRef;
+  DB.set("metas/"+ym+"__"+loja,{ym,loja,faturamento:num(val("mt_fat")),cmvMaxPerc:num(val("mt_cmv")),margemContribPerc:num(val("mt_margem")),lucroOperacional:num(val("mt_lucro")),ticketMedio:num(val("mt_ticket")),marketingMax:num(val("mt_mkt")),pessoalMaxPerc:num(val("mt_pessoal")),criadoEm:Date.now()});
+  toast("Metas salvas para "+fmtMesLabel(ym)+".");
+}
+// Gera os alertas acionáveis (problema + impacto + ação + tela). Usado no Dashboard e na tela Alertas.
+function gerarAlertas(ym){
+  const A=[], d=dreMes(ym), R=realizadoMes(ym), meta=metaAtual(ym), f=fatorProjecao(ym);
+  const abertas=obj2arr(STATE.contas).filter(c=>c.status!=="paga"&&daLoja(c));
+  const venc=abertas.filter(c=>diasAte(c.vencimento)<0), prox=abertas.filter(c=>{const x=diasAte(c.vencimento);return x>=0&&x<=7;});
+  const pend=obj2arr(STATE.saidas).filter(s=>s.status==="pendente"&&daLoja(s));
+  if(venc.length) A.push({prio:1,t:"red",titulo:venc.length+" conta(s) vencida(s)",desc:"Total "+reais(venc.reduce((s,c)=>s+num(c.valor),0))+" em atraso.",acao:"Ver contas",pg:"contas"});
+  if(d.receitaLiquida>0 && d.resultado<0) A.push({prio:1,t:"red",titulo:"Resultado operacional negativo",desc:"O mês está em "+reais(d.resultado)+". Reveja custos e preços.",acao:"Ver DRE",pg:"dre"});
+  if(meta&&meta.cmvMaxPerc>0&&R.cmvPct>meta.cmvMaxPerc){ const imp=(R.cmvPct-meta.cmvMaxPerc)/100*d.receitaLiquida; A.push({prio:1,t:"red",titulo:"CMV acima da meta",desc:"CMV em "+pct(R.cmvPct)+" (meta "+pct(meta.cmvMaxPerc)+"). Impacto ~"+reais(imp)+".",acao:"Rentabilidade",pg:"rentabilidade"}); }
+  if(meta&&meta.faturamento>0){ const proj=R.faturamento*f; if(proj<0.9*meta.faturamento) A.push({prio:2,t:"amber",titulo:"Meta de faturamento em risco",desc:"Projeção "+reais(proj)+" vs meta "+reais(meta.faturamento)+".",acao:"Ver metas",pg:"metas"}); }
+  if(meta&&meta.pessoalMaxPerc>0&&d.receitaLiquida>0){ const pp=d.pessoal/d.receitaLiquida*100; if(pp>meta.pessoalMaxPerc) A.push({prio:2,t:"amber",titulo:"Pessoal acima da meta",desc:"Folha consome "+pct(pp)+" da receita (meta "+pct(meta.pessoalMaxPerc)+").",acao:"Ver DRE",pg:"dre"}); }
+  if(meta&&meta.marketingMax>0&&d.marketing>meta.marketingMax) A.push({prio:2,t:"amber",titulo:"Marketing acima do limite",desc:reais(d.marketing)+" gastos (limite "+reais(meta.marketingMax)+").",acao:"Ver saídas",pg:"saidas"});
+  if(prox.length) A.push({prio:2,t:"amber",titulo:prox.length+" conta(s) vencem em 7 dias",desc:"Total "+reais(prox.reduce((s,c)=>s+num(c.valor),0))+".",acao:"Ver tarefas",pg:"tarefas"});
+  if(pend.length) A.push({prio:3,t:"amber",titulo:pend.length+" comprovante(s) no WhatsApp",desc:"Aguardando confirmação para lançar.",acao:"Ver saídas",pg:"saidas"});
+  A.sort((a,b)=>a.prio-b.prio);
+  if(!A.length) A.push({prio:9,t:"green",titulo:"Tudo em ordem",desc:"Sem pendências críticas neste mês.",acao:"",pg:""});
+  return A;
+}
+function renderAlertas(el){
+  document.getElementById("pgSub").textContent="Tudo que exige ação — por ordem de prioridade.";
+  const A=gerarAlertas(mesRef);
+  el.innerHTML=`<div class="card"><div class="hd"><h3>🔔 Alertas e plano de ação (${A.length})</h3><p>Cada alerta traz o problema, o impacto e o atalho para resolver.</p></div><div class="bd">
+    ${A.map(a=>`<div class="alert ${a.t}"><div><div class="at">${["","🔴 ","🟠 ","🟡 "][a.prio]||""}${esc(a.titulo)}</div><div class="ad">${esc(a.desc)}</div></div>${a.acao?`<button class="btn ghost sm" onclick="irPara('${a.pg}')">${esc(a.acao)}</button>`:""}</div>`).join("")}
+  </div></div>`;
+}
+
 /* ===================== CONTAS A RECEBER ================================== */
 function renderReceber(el){
   document.getElementById("pgSub").textContent = "Valores a receber com previsão de data. Ao marcar como recebida, vira uma entrada no caixa.";
@@ -1518,24 +1673,65 @@ function addCusto(tipo){
 function removerCusto(id){ if(confirm("Excluir este custo?")){ DB.remove("custos/"+id); } }
 
 /* ===================== DRE ================================================= */
-function renderDRE(el){
-  const ym=mesAtual();
-  document.getElementById("pgSub").textContent = "Resultado de "+fmtMesLabel(ym);
-  const ent=obj2arr(STATE.entradas).filter(e=>noMes(e.data,ym)&&daLoja(e));
+// Calcula o DRE gerencial de um mês (base: VENDAS quando existem; senão, ENTRADAS).
+// Regra anti-dupla-contagem: CMV vem das vendas; saídas de PRODUÇÃO (insumos/embalagens) são
+// estoque/compras e NÃO entram como despesa no DRE.
+function dreMes(ym){
+  const vendas=obj2arr(STATE.vendas).filter(v=>daLoja(v)&&noMes(v.data,ym));
+  const conf=vendas.filter(v=>(v.status||"confirmado")==="confirmado");
+  const canc=vendas.filter(v=>["cancelado","estornado"].includes(v.status));
+  const temVendas=conf.length>0;
+  let receitaBruta=0,desconto=0,taxaCanal=0,taxaPag=0,cmv=0,cancelado=0;
+  if(temVendas){
+    conf.forEach(v=>{ receitaBruta+=num(v.valorProdutosBruto)+num(v.freteCobrado); desconto+=num(v.desconto); taxaCanal+=num(v.taxaCanalValor); taxaPag+=num(v.taxaPagamentoValor); cmv+=cmvDaVenda(v); });
+    cancelado=canc.reduce((t,v)=>t+num(v.valorProdutosBruto),0);
+  } else {
+    const ent=obj2arr(STATE.entradas).filter(e=>noMes(e.data,ym)&&daLoja(e));
+    receitaBruta=ent.reduce((t,e)=>t+num(e.valor),0);
+    taxaPag=ent.reduce((t,e)=>t+num(e.valor)*num(e.taxaPerc)/100,0);
+  }
+  const receitaLiquida=receitaBruta-desconto-taxaCanal-taxaPag;
+  const margemContrib=receitaLiquida-cmv;
   const sai=obj2arr(STATE.saidas).filter(s=>noMes(s.data,ym)&&s.status==="confirmado"&&daLoja(s));
-  const recLiq=ent.reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
-  const prod=sai.filter(s=>s.grupo==="PRODUCAO").reduce((t,s)=>t+num(s.valor),0);
-  const oper=sai.filter(s=>s.grupo!=="PRODUCAO").reduce((t,s)=>t+num(s.valor),0);
-  const result=recLiq-prod-oper;
-  const linha=(lbl,v,cls)=>`<tr><td>${lbl}</td><td class="r ${cls||''}">${reais(v)}</td></tr>`;
-  el.innerHTML = `<div class="card" style="max-width:560px"><div class="hd"><h3>DRE simplificado — ${fmtMesLabel(ym)}</h3><p>Faturamento − custos = resultado.</p></div><div class="bd">
-    <table><tbody>
-      ${linha("Receita líquida (vendas − taxas)",recLiq,"pos")}
-      ${linha("(−) Custos de produção (CMV/insumos)",-prod,"neg")}
-      ${linha("(−) Despesas operacionais",-oper,"neg")}
-      <tr style="border-top:2px solid var(--ink)"><td><b>= Resultado do mês</b></td><td class="r"><b class="${result>=0?'pos':'neg'}">${reais(result)}</b></td></tr>
+  const somaCat=fn=>sai.filter(fn).reduce((t,s)=>t+num(s.valor),0);
+  const logistica=somaCat(s=>s.categoria==="ENTREGA");
+  const marketing=somaCat(s=>s.categoria==="MARKETING");
+  const pessoal=somaCat(s=>s.categoria==="SALARIOS");
+  const impostos=somaCat(s=>s.categoria==="IMPOSTOS_TAXAS");
+  const fixos=somaCat(s=>grupoDe(s.categoria)==="OPERACIONAL" && !["ENTREGA","MARKETING","SALARIOS","IMPOSTOS_TAXAS"].includes(s.categoria));
+  const despesasOper=logistica+marketing+pessoal+impostos+fixos;
+  return {temVendas,receitaBruta,desconto,cancelado,taxaCanal,taxaPag,receitaLiquida,cmv,margemContrib,logistica,marketing,pessoal,impostos,fixos,despesasOper,resultado:margemContrib-despesasOper};
+}
+function renderDRE(el){
+  const ym=mesRef;
+  document.getElementById("pgSub").textContent="DRE gerencial — "+fmtMesLabel(ym);
+  const d=dreMes(ym), ant=dreMes(mesAnteriorYM(ym)), RL=d.receitaLiquida;
+  const pRL=v=>RL>0?(v/RL*100).toFixed(1).replace(".",",")+"%":"—";
+  const L=(lbl,v,o)=>{ o=o||{}; return `<tr${o.top?' style="border-top:2px solid var(--ink)"':''}><td>${o.bold?"<b>":""}${lbl}${o.bold?"</b>":""}</td><td class="r ${o.cls||''}">${o.bold?"<b>":""}${reais(v)}${o.bold?"</b>":""}</td><td class="r muted">${o.semPct?"":pRL(v)}</td></tr>`; };
+  el.innerHTML=`
+  <div class="grid g3" style="margin-bottom:14px">
+    <div class="kpi"><div class="ic g">$</div><div><div class="kl">Receita líquida</div><div class="kv pos">${reais(d.receitaLiquida)}</div>${trendChip(d.receitaLiquida,ant.receitaLiquida,true)}</div></div>
+    <div class="kpi"><div class="ic b">↗</div><div><div class="kl">Margem de contribuição</div><div class="kv">${reais(d.margemContrib)}</div><div class="kh">${pRL(d.margemContrib)} da receita</div></div></div>
+    <div class="kpi"><div class="ic ${d.resultado>=0?'g':'r'}">📊</div><div><div class="kl">Resultado operacional</div><div class="kv ${d.resultado>=0?'pos':'neg'}">${reais(d.resultado)}</div>${trendChip(d.resultado,ant.resultado,true)}</div></div>
+  </div>
+  <div class="card" style="max-width:680px"><div class="hd"><h3>DRE gerencial — ${fmtMesLabel(ym)}</h3><p>${d.temVendas?"Base: vendas confirmadas (Cardápio Web). CMV das vendas; compras de insumos não entram aqui (são estoque).":"Sem vendas no mês — base provisória: entradas do caixa."} Valores e % sobre a receita líquida.</p></div><div class="bd">
+    <table><thead><tr><th>Linha</th><th class="r">R$</th><th class="r">% RL</th></tr></thead><tbody>
+      ${L("Receita bruta (produtos + frete)",d.receitaBruta,{})}
+      ${L("(−) Descontos e cupons",-d.desconto,{cls:"neg"})}
+      ${d.cancelado?L("(memo) Cancelados/estornos",-d.cancelado,{cls:"muted",semPct:true}):""}
+      ${L("(−) Taxas de canal",-d.taxaCanal,{cls:"neg"})}
+      ${L("(−) Taxas de pagamento",-d.taxaPag,{cls:"neg"})}
+      ${L("= Receita líquida",d.receitaLiquida,{bold:true})}
+      ${L("(−) CMV (custo dos produtos vendidos)",-d.cmv,{cls:"neg"})}
+      ${L("= Margem de contribuição",d.margemContrib,{bold:true,cls:d.margemContrib>=0?'pos':'neg'})}
+      ${L("(−) Logística / entrega",-d.logistica,{cls:"neg"})}
+      ${L("(−) Marketing",-d.marketing,{cls:"neg"})}
+      ${L("(−) Pessoal",-d.pessoal,{cls:"neg"})}
+      ${L("(−) Custos fixos",-d.fixos,{cls:"neg"})}
+      ${L("(−) Impostos e taxas financeiras",-d.impostos,{cls:"neg"})}
+      ${L("= Resultado operacional",d.resultado,{top:true,bold:true,cls:d.resultado>=0?'pos':'neg'})}
     </tbody></table>
-    <div class="small muted" style="margin-top:10px">${result>=0?"Você teve lucro neste mês. 🎉":"Atenção: as despesas superaram o que entrou."}</div>
+    <div class="small muted" style="margin-top:10px">${d.resultado>=0?"Resultado operacional positivo neste mês. 🎉":"Atenção: resultado operacional negativo."}</div>
   </div></div>`;
 }
 
@@ -1841,6 +2037,7 @@ function boot(){
   bind("usuarios","usuarios");
   bind("vendas","vendas");
   bind("canais","canais");
+  bind("metas","metas");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
