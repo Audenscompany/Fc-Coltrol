@@ -507,6 +507,7 @@ function sugerirCategoria(texto){
 const PAGINAS = [
   {id:"dashboard",icon:"🏠",label:"Visão financeira",grupo:"VISÃO EXECUTIVA",render:renderDashboard},
   {id:"vendas",icon:"🛒",label:"Vendas / Pedidos",grupo:"VENDAS E MARGEM",render:renderVendas},
+  {id:"rentabilidade",icon:"📦",label:"Produtos e rentabilidade",grupo:"VENDAS E MARGEM",render:renderRentabilidade},
   {id:"entradas",icon:"📥",label:"Entradas",grupo:"FINANCEIRO",render:renderEntradas},
   {id:"saidas",icon:"📤",label:"Saídas",grupo:"FINANCEIRO",render:renderSaidas},
   {id:"contas",icon:"🧾",label:"Contas a pagar",grupo:"FINANCEIRO",render:renderContas},
@@ -545,12 +546,12 @@ function render(){
   if(!sessaoValida()) return;
   const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
-  const comFiltro = ["dashboard","vendas","entradas","saidas","contas","receber","tarefas","dre","fluxo"].includes(paginaAtual);
+  const comFiltro = ["dashboard","vendas","rentabilidade","entradas","saidas","contas","receber","tarefas","dre","fluxo"].includes(paginaAtual);
   const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
       <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
       ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}
     </select></div>`;
-  const selMes = ["dashboard","vendas"].includes(paginaAtual)? `<div class="tbfld"><label>Mês</label><input type="month" value="${mesRef}" onchange="setMesRef(this.value)"></div>` : "";
+  const selMes = ["dashboard","vendas","rentabilidade"].includes(paginaAtual)? `<div class="tbfld"><label>Mês</label><input type="month" value="${mesRef}" onchange="setMesRef(this.value)"></div>` : "";
   const nm = `<div style="position:relative">
       <button class="btn cta" onclick="toggleNovaMov(event)">+ Nova movimentação</button>
       <div id="novaMovMenu" style="display:none;position:absolute;right:0;top:112%;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 10px 28px rgba(0,0,0,.14);z-index:30;min-width:200px;overflow:hidden">
@@ -1084,6 +1085,77 @@ function renderVendas(el){
   </div></div>`;
   destruirCharts();
   if(typeof Chart!=="undefined" && canalArr.length){ const elc=document.getElementById("chVendaCanal"); if(elc) _charts.push(new Chart(elc,{type:"doughnut",data:{labels:canalArr.map(x=>x[0]),datasets:[{data:canalArr.map(x=>x[1]),backgroundColor:PAL_CAT,borderWidth:2,borderColor:"#fff"}]},options:{responsive:true,maintainAspectRatio:false,cutout:"62%",plugins:{legend:{display:false}}}})); }
+}
+
+/* ===================== RENTABILIDADE POR PRODUTO (Fase 2) =============== */
+// Liga o nome do item vendido (Cardápio Web) ao produto da ficha técnica.
+// 1) vínculo manual salvo em config.vinculoProdutos; 2) nome idêntico (normalizado).
+function produtoDoItem(nomeSnapshot){
+  const n=norm(nomeSnapshot);
+  const mapa=(STATE.config&&STATE.config.vinculoProdutos)||{};
+  if(mapa[n] && STATE.produtos[mapa[n]]) return Object.assign({_id:mapa[n]}, STATE.produtos[mapa[n]]);
+  return obj2arr(STATE.produtos).find(p=>norm(p.nome)===n) || null;
+}
+function vincularProduto(nomeNorm, produtoId){
+  const mapa=Object.assign({}, (STATE.config&&STATE.config.vinculoProdutos)||{});
+  if(produtoId) mapa[nomeNorm]=produtoId; else delete mapa[nomeNorm];
+  DB.update("config",{vinculoProdutos:mapa}); toast("Vínculo salvo.");
+}
+function mediana(arr){ if(!arr.length) return 0; const a=arr.slice().sort((x,y)=>x-y); const m=Math.floor(a.length/2); return a.length%2?a[m]:(a[m-1]+a[m])/2; }
+function renderRentabilidade(el){
+  document.getElementById("pgSub").textContent="Margem por produto, a partir das vendas reais e da ficha técnica. "+fmtMesLabel(mesRef);
+  const ym=mesRef;
+  const vendas=obj2arr(STATE.vendas).filter(v=>daLoja(v) && noMes(v.data,ym) && (v.status||"confirmado")==="confirmado");
+  // agrega por produto vinculado (ou pelo nome, quando sem vínculo)
+  const ag={}, semVinc={};
+  vendas.forEach(v=>(v.itens||[]).forEach(it=>{
+    const prod=produtoDoItem(it.nomeSnapshot);
+    const q=num(it.quantidade), receita=num(it.precoUnitario)*q-num(it.descontoItem);
+    const cmvUnit = num(it.cmvUnitarioSnapshot)>0? num(it.cmvUnitarioSnapshot) : (prod? cmvProduto(prod):0);
+    const chave = prod? prod._id : ("x_"+norm(it.nomeSnapshot));
+    const nome = prod? prod.nome : it.nomeSnapshot;
+    if(!ag[chave]) ag[chave]={nome,qtd:0,receita:0,cmv:0,vinc:!!prod};
+    ag[chave].qtd+=q; ag[chave].receita+=receita; ag[chave].cmv+=cmvUnit*q;
+    if(!prod){ const nn=norm(it.nomeSnapshot); semVinc[nn]=(semVinc[nn]||0)+q; }
+  }));
+  let linhas=Object.values(ag).map(p=>{ p.margem=p.receita-p.cmv; p.margemPct=p.receita>0?p.margem/p.receita*100:0; return p; });
+  // classificação estratégica
+  const medQtd=mediana(linhas.map(p=>p.qtd)), medMargem=mediana(linhas.filter(p=>p.receita>0).map(p=>p.margemPct));
+  const classif=p=>{ const av=p.qtd>=medQtd, am=p.margemPct>=medMargem;
+    if(!p.vinc) return {t:"Sem vínculo",c:"b-gray"};
+    if(av&&am) return {t:"Estrela",c:"b-green"}; if(!av&&am) return {t:"Motor de lucro",c:"b-green"};
+    if(av&&!am) return {t:"Atenção",c:"b-gold"}; return {t:"Reprecificar",c:"b-red"}; };
+  linhas.sort((a,b)=>b.margem-a.margem);
+  const pend=Object.keys(semVinc).sort((a,b)=>semVinc[b]-semVinc[a]);
+  const optProd=obj2arr(STATE.produtos).sort((a,b)=>(a.nome||"").localeCompare(b.nome||"")).map(p=>`<option value="${p._id}">${esc(p.nome)}</option>`).join("");
+  const top=linhas.filter(p=>p.vinc).slice(0,8);
+  const recTot=linhas.reduce((s,p)=>s+p.receita,0), margTot=linhas.reduce((s,p)=>s+p.margem,0);
+  el.innerHTML=`
+  <div class="grid g3" style="margin-bottom:14px">
+    <div class="kpi"><div class="ic g">$</div><div><div class="kl">Receita dos produtos</div><div class="kv pos">${reais(recTot)}</div></div></div>
+    <div class="kpi"><div class="ic b">↗</div><div><div class="kl">Margem de contribuição</div><div class="kv">${reais(margTot)}</div><div class="kh">${recTot>0?pct(margTot/recTot*100):'—'} da receita</div></div></div>
+    <div class="kpi"><div class="ic y">📦</div><div><div class="kl">Produtos vendidos</div><div class="kv">${linhas.filter(p=>p.vinc).length}</div><div class="kh">${pend.length} sem vínculo</div></div></div>
+  </div>
+  ${pend.length?`<div class="card" style="border-color:#f0d488;margin-bottom:14px"><div class="hd"><h3>🔗 Vincular produtos vendidos à ficha técnica (${pend.length})</h3><p>Estes nomes vieram do Cardápio Web e ainda não têm produto na Precificação. Vincule para entrar na margem.</p></div><div class="bd">
+    ${pend.map(nn=>`<div class="rz"><span><b>${esc(nn)}</b> <span class="muted">· ${semVinc[nn]} un.</span></span>
+      <span><select onchange="vincularProduto('${nn.replace(/'/g,"")}',this.value)"><option value="">— escolher produto —</option>${optProd}</select></span></div>`).join("")}
+  </div></div>`:""}
+  <div class="chart-grid" style="margin-top:0">
+    <div class="card"><div class="hd"><h3>Top produtos por margem — ${fmtMesLabel(ym)}</h3></div><div class="bd"><div class="chart-box">${top.length?'<canvas id="chRent"></canvas>':'<div class="empty">Sem vendas vinculadas ainda.</div>'}</div></div></div>
+    <div class="card"><div class="hd"><h3>Classificação</h3><p>Estrela · Motor de lucro · Atenção · Reprecificar.</p></div><div class="bd">
+      ${linhas.length?`<table><thead><tr><th>Produto</th><th class="r">Qtd</th><th class="r">Margem %</th><th>Classe</th></tr></thead><tbody>${
+        linhas.slice(0,12).map(p=>{const c=classif(p);return `<tr><td>${esc(p.nome)}</td><td class="r">${p.qtd}</td><td class="r">${p.receita>0?pct(p.margemPct):'—'}</td><td><span class="badge ${c.c}">${c.t}</span></td></tr>`;}).join("")
+      }</tbody></table>`:`<div class="empty">Nenhuma venda no mês.</div>`}
+    </div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><div class="hd"><h3>Detalhe por produto</h3></div><div class="bd">
+    ${linhas.length?tabela(["Produto","Qtd","Receita","CMV","Margem","Margem %","Classe"], linhas.map(p=>{const c=classif(p);return [
+      esc(p.nome), {r:true,h:String(p.qtd)}, {r:true,h:reais(p.receita)}, {r:true,h:reais(p.cmv)},
+      {r:true,h:`<b class="${p.margem>=0?'pos':'neg'}">${reais(p.margem)}</b>`}, {r:true,h:p.receita>0?pct(p.margemPct):'—'}, `<span class="badge ${c.c}">${c.t}</span>`
+    ];})):`<div class="empty">Sem vendas neste mês. Os pedidos do Cardápio Web alimentam esta tela automaticamente.</div>`}
+  </div></div>`;
+  destruirCharts();
+  if(typeof Chart!=="undefined" && top.length){ const c=document.getElementById("chRent"); if(c) _charts.push(new Chart(c,{type:"bar",data:{labels:top.map(p=>p.nome),datasets:[{label:"Margem (R$)",data:top.map(p=>p.margem),backgroundColor:"#2f8a2c",borderRadius:6}]},options:{indexAxis:"y",responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>"R$ "+Number(v).toLocaleString("pt-BR")}}}}})); }
 }
 
 /* ===================== CONTAS A RECEBER ================================== */
