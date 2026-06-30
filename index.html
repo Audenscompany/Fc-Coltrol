@@ -917,8 +917,12 @@ function renderContas(el){
     <div class="row" style="margin-top:10px">
       <div><label class="f">Categoria</label><select id="c_cat">${optCat}</select></div>
       <div><label class="f">Fornecedor (opcional)</label><input id="c_forn" list="fornListC" placeholder="Nenhum"><datalist id="fornListC">${fornecedores.map(f=>`<option value="${esc(f)}">`).join("")}</datalist></div>
-      <div><label class="f">Estabelecimento</label><select id="c_loja">${optLoja}</select></div>
+      <div><label class="f">Estabelecimento</label><select id="c_loja" onchange="document.getElementById('c_rateio').style.display=this.value==='__ambas'?'flex':'none'">${optLoja}<option value="__ambas">Ambas (dividir)</option></select></div>
       <div><label class="f">Repetir</label><select id="c_rec"><option value="nenhuma">Não repete</option><option value="mensal">Todo mês</option></select></div>
+    </div>
+    <div class="row" id="c_rateio" style="margin-top:10px;display:none;background:#f3effb;border:1px solid #e3d9f7;border-radius:10px;padding:10px">
+      <div style="flex:1 1 100%;font-size:12px;color:#5b2bb0;font-weight:700">Rateio entre as lojas — % do valor para cada uma (precisa somar 100%)</div>
+      ${LOJAS.map(l=>`<div><label class="f">${esc(l.nome)} (%)</label><input id="c_rt_${l.id}" inputmode="decimal" value="${Math.round(100/LOJAS.length)}"></div>`).join("")}
     </div>
     <button class="btn" style="margin-top:12px" onclick="addConta()">Adicionar conta</button>
   </div></div>
@@ -943,8 +947,23 @@ function renderContas(el){
 function addConta(){
   const descricao=val("c_desc"), valor=num(val("c_val")), vencimento=val("c_venc")||hojeISO();
   if(!descricao||valor<=0) return toast("Preencha descrição e valor.");
-  const categoria=val("c_cat");
-  DB.push("contas",{descricao,valor,vencimento,categoria,grupo:grupoDe(categoria),fornecedor:val("c_forn")||null,loja:val("c_loja")||lojaPadrao(),recorrencia:val("c_rec")||"nenhuma",status:"aberta",criadoEm:Date.now()});
+  const categoria=val("c_cat"), loja=val("c_loja")||lojaPadrao();
+  const base={vencimento,categoria,grupo:grupoDe(categoria),fornecedor:val("c_forn")||null,recorrencia:val("c_rec")||"nenhuma",status:"aberta",criadoEm:Date.now()};
+  if(loja==="__ambas"){
+    // Rateio: uma conta por loja, com a parte de cada uma (proporcional aos %).
+    let pcts=LOJAS.map(l=>({id:l.id,pct:num(val("c_rt_"+l.id))}));
+    let soma=pcts.reduce((s,p)=>s+p.pct,0);
+    if(soma<=0){ pcts=LOJAS.map(l=>({id:l.id,pct:100/LOJAS.length})); soma=100; }
+    const partes=pcts.filter(p=>p.pct>0); const rateioId="rat"+Date.now(); let acum=0;
+    partes.forEach((p,i)=>{
+      const parte = i===partes.length-1 ? Math.round((valor-acum)*100)/100 : Math.round(valor*p.pct/soma*100)/100;
+      acum += parte;
+      DB.push("contas",Object.assign({},base,{descricao:descricao+" (rateio "+Math.round(p.pct/soma*100)+"%)",valor:parte,loja:p.id,rateioId}));
+    });
+    toast("Conta rateada entre as lojas.");
+    return;
+  }
+  DB.push("contas",Object.assign({},base,{descricao,valor,loja}));
   toast("Conta adicionada.");
 }
 function pagarConta(id){
@@ -1305,7 +1324,8 @@ let metaLojaSel=null;
 function renderMetas(el){
   document.getElementById("pgSub").textContent="Metas por loja e mês, acompanhamento do ritmo e projeção de fechamento — "+fmtMesLabel(mesRef);
   const ym=mesRef;
-  if(!metaLojaSel) metaLojaSel = lojaFiltro!=="todos"?lojaFiltro:LOJAS[0].id;
+  // O formulário acompanha a loja do filtro do topo; em "Todos", mantém a última escolhida.
+  if(lojaFiltro!=="todos") metaLojaSel = lojaFiltro; else if(!metaLojaSel) metaLojaSel = LOJAS[0].id;
   const inds=indicadoresMeta(ym);
   const mt=metaDe(ym,metaLojaSel)||{};
   el.innerHTML=`
