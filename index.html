@@ -1442,11 +1442,29 @@ function receberConta(id){
 function removerReceber(id){ if(confirm("Excluir esta conta a receber?")){ DB.remove("receber/"+id); } }
 
 /* ===================== FLUXO DE CAIXA (projeção) ======================== */
+// Saldo de caixa de uma loja. Se houver ajuste manual (config.saldoCaixa[loja] = {valor,data}),
+// usa esse valor como base e soma só os movimentos APÓS a data do ajuste (reconciliação).
+function saldoBaseLoja(l){
+  const man = STATE.config && STATE.config.saldoCaixa && STATE.config.saldoCaixa[l];
+  const ent = obj2arr(STATE.entradas).filter(e=>(e.loja||"")===l && e.status!=="pendente");
+  const sai = obj2arr(STATE.saidas).filter(s=>(s.loja||"")===l && s.status==="confirmado");
+  if(man && man.valor!=null && man.valor!==""){
+    const corte = man.data||"0000-00-00";
+    const e2 = ent.filter(e=>(e.data||"")>corte).reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
+    const s2 = sai.filter(s=>(s.data||"")>corte).reduce((t,s)=>t+num(s.valor),0);
+    return num(man.valor)+e2-s2;
+  }
+  return ent.reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0) - sai.reduce((t,s)=>t+num(s.valor),0);
+}
+function saldoAtualCaixa(){ if(lojaFiltro!=="todos") return saldoBaseLoja(lojaFiltro); return LOJAS.reduce((t,l)=>t+saldoBaseLoja(l.id),0); }
+function ajusteSaldo(l){ return (STATE.config && STATE.config.saldoCaixa && STATE.config.saldoCaixa[l]) || null; }
+function salvarSaldoCaixa(){ const loja=val("sc_loja")||lojaPadrao(); const v=num(val("sc_val")); const data=val("sc_data")||hojeISO(); const cur=Object.assign({},(STATE.config&&STATE.config.saldoCaixa)||{}); cur[loja]={valor:v,data}; DB.update("config",{saldoCaixa:cur}); toast("Saldo de "+lojaNome(loja)+" ajustado para "+reais(v)+"."); }
+function limparSaldoCaixa(loja){ const cur=Object.assign({},(STATE.config&&STATE.config.saldoCaixa)||{}); delete cur[loja]; DB.update("config",{saldoCaixa:cur}); toast("Saldo de "+lojaNome(loja)+" voltou ao cálculo automático."); }
 function renderFluxo(el){
   document.getElementById("pgSub").textContent = "Saldo atual e projeção dos próximos 30 dias (contas a pagar e a receber).";
-  const recLiqTot = obj2arr(STATE.entradas).filter(e=>e.status!=="pendente"&&daLoja(e)).reduce((t,e)=>t+num(e.valor)*(1-num(e.taxaPerc)/100),0);
-  const despTot = obj2arr(STATE.saidas).filter(s=>s.status==="confirmado"&&daLoja(s)).reduce((t,s)=>t+num(s.valor),0);
-  const saldo = recLiqTot - despTot;
+  const saldo = saldoAtualCaixa();
+  const ajustes = LOJAS.map(l=>({id:l.id,aj:ajusteSaldo(l.id)})).filter(x=>x.aj);
+  const saldoManual = lojaFiltro!=="todos" ? !!ajusteSaldo(lojaFiltro) : ajustes.length>0;
   const limite=30;
   const aPagar = obj2arr(STATE.contas).filter(c=>c.status!=="paga"&&daLoja(c)&&diasAte(c.vencimento)!==null&&diasAte(c.vencimento)<=limite).map(c=>({tipo:"saida",data:c.vencimento,desc:c.descricao,valor:-num(c.valor)}));
   const aReceber = obj2arr(STATE.receber).filter(c=>c.status!=="recebida"&&daLoja(c)&&diasAte(c.vencimento)!==null&&diasAte(c.vencimento)<=limite).map(c=>({tipo:"entrada",data:c.vencimento,desc:c.descricao,valor:num(c.valor)}));
@@ -1456,11 +1474,20 @@ function renderFluxo(el){
   let acum=saldo;
   el.innerHTML = `
   <div class="grid g4">
-    <div class="kpi"><div class="ic b">🏦</div><div><div class="kl">Saldo atual</div><div class="kv">${reais(saldo)}</div><div class="kh">entradas líq. − saídas</div></div></div>
+    <div class="kpi"><div class="ic b">🏦</div><div><div class="kl">Saldo atual</div><div class="kv">${reais(saldo)}</div><div class="kh">${saldoManual?"✏️ ajustado manualmente":"entradas líq. − saídas"}</div></div></div>
     <div class="kpi"><div class="ic g">📥</div><div><div class="kl">A receber (30d)</div><div class="kv pos">${reais(totReceber)}</div></div></div>
     <div class="kpi"><div class="ic r">📤</div><div><div class="kl">A pagar (30d)</div><div class="kv neg">${reais(Math.abs(totPagar))}</div></div></div>
     <div class="kpi"><div class="ic ${projetado>=0?'g':'r'}">📈</div><div><div class="kl">Saldo projetado</div><div class="kv ${projetado>=0?'pos':'neg'}">${reais(projetado)}</div><div class="kh">em 30 dias</div></div></div>
   </div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>✏️ Corrigir saldo de caixa</h3><p>Informe o valor real que a loja tem em caixa/banco hoje. A partir da data informada, o sistema soma as entradas e saídas por cima desse valor.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Empresa</label><select id="sc_loja">${LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+      <div><label class="f">Saldo real hoje (R$)</label><input id="sc_val" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="f">Data do saldo</label><input type="date" id="sc_data" value="${hojeISO()}"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="salvarSaldoCaixa()">Salvar saldo</button></div>
+    </div>
+    ${ajustes.length? `<div class="hr"></div><div class="small" style="display:flex;flex-direction:column;gap:6px">${ajustes.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center"><span class="muted">${esc(lojaNome(x.id))}: ajustado para <b>${reais(x.aj.valor)}</b> em ${fmtData(x.aj.data)}</span><button class="btn ghost sm" onclick="limparSaldoCaixa('${x.id}')">voltar ao automático</button></div>`).join("")}</div>`:""}
+  </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Movimentos previstos (30 dias)</h3></div><div class="bd">
     ${mov.length? `<table><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th class="r">Valor</th><th class="r">Saldo</th></tr></thead><tbody>${
       mov.map(mm=>{acum+=mm.valor;return `<tr><td>${fmtData(mm.data)}</td><td>${esc(mm.desc||"—")}</td><td>${mm.tipo==="entrada"?'<span class="badge b-green">Entrada</span>':'<span class="badge b-red">Saída</span>'}</td><td class="r ${mm.valor>=0?'pos':'neg'}">${reais(mm.valor)}</td><td class="r"><b>${reais(acum)}</b></td></tr>`;}).join("")
