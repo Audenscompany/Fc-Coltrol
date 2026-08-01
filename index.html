@@ -331,7 +331,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -568,6 +568,7 @@ const PAGINAS = [
   {id:"paineldiv",icon:"📊",label:"Painel de dívidas",grupo:"FINANCEIRO",render:renderPainelDividas},
   {id:"custos",icon:"📒",label:"Custos fixos/variáveis",grupo:"CUSTOS E OPERAÇÃO",render:renderCustos},
   {id:"precificacao",icon:"🏷️",label:"Precificação",grupo:"CUSTOS E OPERAÇÃO",render:renderPrecificacao},
+  {id:"colaboradores",icon:"👥",label:"Colaboradores",grupo:"CUSTOS E OPERAÇÃO",render:renderColaboradores},
   {id:"categorias",icon:"🗂️",label:"Categorias",grupo:"CONFIGURAÇÕES",render:renderCategorias},
   {id:"formas",icon:"💳",label:"Formas de pagamento",grupo:"CONFIGURAÇÕES",render:renderFormas},
   {id:"canais",icon:"📡",label:"Canais de venda",grupo:"CONFIGURAÇÕES",render:renderCanais},
@@ -2171,6 +2172,116 @@ function renderPainelDividas(el){
   el.innerHTML=html;
 }
 
+/* ===================== COLABORADORES (pagamento por ciclo) ============== */
+let abaColab="pagamentos";
+let cicloRef=null; // data (quarta) de início do ciclo em exibição
+function cicloInicio(iso){ const d=new Date((iso||hojeISO())+"T00:00:00"); const dow=d.getDay(); const diff=(dow-3+7)%7; d.setDate(d.getDate()-diff); return d.toISOString().slice(0,10); }
+function maisDias(iso,n){ const d=new Date(iso+"T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function cicloFim(ini){ return maisDias(ini,6); }
+function cicloLabel(ini){ return fmtData(ini)+" a "+fmtData(cicloFim(ini)); }
+function cicloDesloca(n){ return maisDias(cicloRef||cicloInicio(hojeISO()), 7*n); }
+function colabPorNome(){ const m={}; obj2arr(STATE.colaboradores).forEach(c=>{ m[norm(c.nome)]=c; }); return m; }
+// Calcula o que cada colaborador recebe no ciclo [ini,fim].
+function pagamentoCiclo(ini, fim){
+  const dias=obj2arr(STATE.colabDias).filter(d=>(d.data||"")>=ini && (d.data||"")<=fim);
+  const cb=colabPorNome(); const pg={};
+  const get=(nome,tipo)=>{ const k=norm(nome); if(!pg[k]){ const c=cb[k]; pg[k]={nome:String(nome).trim(),tipo,dias:0,diaria:0,taxa:0,moto:0,cadastrado:!!c,clt:c?!!c.clt:false}; } return pg[k]; };
+  dias.forEach(d=>{
+    const salao=(d.salao||[]).map(n=>String(n).trim()).filter(Boolean);
+    const nS=salao.length; const taxaPP=nS>0?num(d.taxaServico)/nS:0;
+    salao.forEach(nome=>{ const p=get(nome,"salao"); const c=cb[norm(nome)]; p.dias++; if(!(c&&c.clt)) p.diaria+=(c?num(c.diaria):0); p.taxa+=taxaPP; });
+    (d.motoboys||[]).forEach(m=>{ if(!m||!m.nome) return; const p=get(m.nome,"motoboy"); p.tipo="motoboy"; p.dias++; p.moto+=num(m.valor); });
+  });
+  return Object.values(pg).map(p=>Object.assign(p,{total:p.diaria+p.taxa+p.moto})).sort((a,b)=>b.total-a.total);
+}
+function renderColaboradores(el){
+  document.getElementById("pgSub").textContent="Pagamento de colaboradores por ciclo (quarta a terça) e cadastro.";
+  const abas=[["pagamentos","Pagamentos"],["cadastro","Cadastro"],["dias","Dias lançados"]];
+  el.innerHTML=`<div class="tabs">${abas.map(([id,l])=>`<button class="${id===abaColab?'active':''}" onclick="abaColab='${id}';render()">${l}</button>`).join("")}</div><div id="colabConteudo"></div>`;
+  const c=document.getElementById("colabConteudo");
+  if(abaColab==="cadastro") return colabCadastro(c);
+  if(abaColab==="dias") return colabDiasView(c);
+  return colabPagamentos(c);
+}
+function colabPagamentos(c){
+  if(!cicloRef) cicloRef=cicloInicio(hojeISO());
+  const ini=cicloRef, fim=cicloFim(ini), hoje=hojeISO();
+  const emAndamento = hoje>=ini && hoje<=fim;
+  const linhas=pagamentoCiclo(ini,fim);
+  const totalGeral=linhas.reduce((s,p)=>s+p.total,0);
+  const totSalao=linhas.filter(p=>p.tipo==="salao").reduce((s,p)=>s+p.total,0);
+  const totMoto=linhas.filter(p=>p.tipo==="motoboy").reduce((s,p)=>s+p.total,0);
+  const naoCad=linhas.filter(p=>!p.cadastrado && p.tipo==="salao").length;
+  c.innerHTML=`
+  <div class="card" style="margin-bottom:14px"><div class="bd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div><button class="btn ghost sm" onclick="cicloRef=cicloDesloca(-1);render()">← anterior</button>
+      <b style="margin:0 10px">${cicloLabel(ini)}</b>
+      <button class="btn ghost sm" onclick="cicloRef=cicloDesloca(1);render()">próximo →</button>
+      ${emAndamento?'<span class="badge b-gold" style="margin-left:8px">em andamento</span>':'<span class="badge b-gray" style="margin-left:8px">fechado</span>'}</div>
+    <button class="btn sm" onclick="cicloRef=cicloInicio(hojeISO());render()">ciclo atual</button>
+  </div></div>
+  <div class="grid g3" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">${emAndamento?"Projetado até agora":"Total do ciclo"}</div><div class="val neg">${reais(totalGeral)}</div><div class="hint">pagamento em ${fmtData(maisDias(ini,7))}</div></div>
+    <div class="stat"><div class="lbl">Salão/Cozinha</div><div class="val">${reais(totSalao)}</div></div>
+    <div class="stat"><div class="lbl">Motoboys</div><div class="val">${reais(totMoto)}</div></div>
+  </div>
+  ${naoCad?`<div class="alert amber" style="margin-bottom:12px"><div><div class="at">${naoCad} pessoa(s) do salão sem cadastro</div><div class="ad">Cadastre em "Cadastro" para definir a diária e marcar carteira assinada (sem cadastro, a diária fica R$ 0).</div></div><button class="btn ghost sm" onclick="abaColab='cadastro';render()">Cadastro</button></div>`:""}
+  <div class="card"><div class="hd"><h3>A pagar no ciclo</h3><p>Salão/cozinha: diária (exceto CLT) + rateio da taxa de serviço. Motoboys: valor do dia.</p></div><div class="bd">
+    ${linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Total</th></tr></thead><tbody>${
+      linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}${(!p.cadastrado&&p.tipo==="salao")?' <span class="badge b-gold">cadastrar</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
+    }<tr style="border-top:2px solid var(--ink)"><td colspan="6"><b>Total do ciclo</b></td><td class="r"><b class="neg">${reais(totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste ciclo. Os dias entram automaticamente pelo grupo de caixa, ou você lança em "Dias lançados".</div>`}
+  </div></div>`;
+}
+function colabCadastro(c){
+  const lista=obj2arr(STATE.colaboradores).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  c.innerHTML=`
+  <div class="card"><div class="hd"><h3>Novo colaborador</h3></div><div class="bd">
+    <div class="row">
+      <div style="flex:2"><label class="f">Nome</label><input id="cl_nome" placeholder="Nome completo"></div>
+      <div><label class="f">Tipo</label><select id="cl_tipo"><option value="salao">Salão/Cozinha</option><option value="motoboy">Motoboy</option></select></div>
+      <div><label class="f">Diária (R$)</label><input id="cl_diaria" inputmode="decimal" placeholder="0,00"></div>
+      <div style="flex:0"><label class="f">Carteira assinada</label><input type="checkbox" id="cl_clt" style="width:20px;height:20px;margin-top:8px"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addColaborador()">Adicionar</button></div>
+    </div>
+    <div class="small muted" style="margin-top:6px">Carteira assinada (CLT): não recebe diária, mas entra no rateio da taxa de serviço. Motoboy: recebe pelo valor do dia (não precisa de diária).</div>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Colaboradores (${lista.length})</h3></div><div class="bd">
+    ${lista.length?`<table><thead><tr><th>Nome</th><th>Tipo</th><th class="r">Diária</th><th>CLT</th><th></th></tr></thead><tbody>${
+      lista.map(c2=>`<tr><td>${esc(c2.nome)}</td><td class="muted">${c2.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${c2.tipo==="motoboy"?"—":reais(c2.diaria)}</td><td>${c2.clt?'<span class="badge b-gray">CLT</span>':'—'}</td><td class="r"><button class="btn ghost sm" onclick="removerColaborador('${c2._id}')">excluir</button></td></tr>`).join("")
+    }</tbody></table>`:`<div class="empty">Nenhum colaborador cadastrado.</div>`}
+  </div></div>`;
+}
+function addColaborador(){ const nome=val("cl_nome"); if(!nome) return toast("Informe o nome."); const cb=document.getElementById("cl_clt"); DB.push("colaboradores",{nome,tipo:val("cl_tipo")||"salao",diaria:num(val("cl_diaria")),clt:!!(cb&&cb.checked),ativo:true,criadoEm:Date.now()}); toast("Colaborador adicionado."); }
+function removerColaborador(id){ if(confirm("Excluir colaborador?")){ DB.remove("colaboradores/"+id); } }
+function colabDiasView(c){
+  const dias=obj2arr(STATE.colabDias).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  c.innerHTML=`
+  <div class="card"><div class="hd"><h3>Lançar dia manual</h3><p>Normalmente entra sozinho pela mensagem do grupo de caixa. Use aqui para corrigir ou completar.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Data</label><input type="date" id="cd_data" value="${hojeISO()}"></div>
+      <div><label class="f">Taxa de serviço total (R$)</label><input id="cd_taxa" inputmode="decimal" placeholder="0,00"></div>
+    </div>
+    <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Salão/Cozinha (nomes separados por vírgula)</label><input id="cd_salao" placeholder="Diego, Maria, Silvana, ..."></div></div>
+    <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Motoboys (um por linha: Nome: valor)</label><textarea id="cd_moto" rows="3" placeholder="Matheus: 185&#10;Maicon: 170"></textarea></div></div>
+    <button class="btn" style="margin-top:10px" onclick="addColabDia()">Salvar dia</button>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Dias lançados (${dias.length})</h3></div><div class="bd">
+    ${dias.length?`<table><thead><tr><th>Data</th><th class="r">Taxa serv.</th><th>Salão/Cozinha</th><th class="r">Motoboys</th><th></th></tr></thead><tbody>${
+      dias.slice(0,80).map(d=>`<tr><td>${fmtData(d.data)}</td><td class="r">${reais(d.taxaServico)}</td><td class="muted small">${esc((d.salao||[]).join(", "))||"—"}</td><td class="r">${(d.motoboys||[]).length}</td><td class="r"><button class="btn ghost sm" onclick="removerColabDia('${d._id}')">excluir</button></td></tr>`).join("")
+    }</tbody></table>`:`<div class="empty">Nenhum dia lançado.</div>`}
+  </div></div>`;
+}
+function addColabDia(){
+  const data=val("cd_data")||hojeISO();
+  const salao=(val("cd_salao")||"").split(",").map(s=>s.trim()).filter(Boolean);
+  const taxa=num(val("cd_taxa"));
+  const el=document.getElementById("cd_moto"); const motoRaw=((el&&el.value)||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean);
+  const motoboys=motoRaw.map(l=>{ const i=l.lastIndexOf(":"); const nome=(i>=0?l.slice(0,i):l).trim(); const valor=num(i>=0?l.slice(i+1):0); return {nome,valor}; }).filter(m=>m.nome);
+  DB.push("colabDias",{data,inicio:0,final:0,salao,taxaServico:taxa,motoboys,origem:"manual",criadoEm:Date.now()});
+  toast("Dia lançado.");
+}
+function removerColabDia(id){ if(confirm("Excluir este dia?")){ DB.remove("colabDias/"+id); } }
+
 /* ===================== IMPORTAR EXCEL (planilha Delivery Lucrativo) ======== */
 function precAbaImportar(c){
   const loja=lojaPrecAtual();
@@ -2486,6 +2597,8 @@ function boot(){
   bind("metas","metas");
   bind("dividas","dividas");
   bind("dividasDet","dividasDet");
+  bind("colaboradores","colaboradores");
+  bind("colabDias","colabDias");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
