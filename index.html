@@ -1899,12 +1899,18 @@ function criarDividaParcelada(){
   let acum=0; const parcelas=[];
   for(let k=1;k<=n;k++){ const p=k===n?Math.round((total-acum)*100)/100:Math.round(total/n*100)/100; acum+=p; parcelas.push({k,valor:p,venc:vencParcela(venc,freq,k-1)}); }
   // Teto mensal de parcelas de dívida (protege o caixa). Só bloqueia se estourar.
+  const novoPorMes={}; parcelas.forEach(p=>{ const ym=(p.venc||"").slice(0,7); novoPorMes[ym]=(novoPorMes[ym]||0)+p.valor; });
   const teto=tetoDividaLoja(loja);
   if(teto>0){
-    const novoPorMes={}; parcelas.forEach(p=>{ const ym=(p.venc||"").slice(0,7); novoPorMes[ym]=(novoPorMes[ym]||0)+p.valor; });
     const estouros=[];
     Object.keys(novoPorMes).sort().forEach(ym=>{ const jaTem=obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&(c.loja||"")===loja&&(c.vencimento||"").slice(0,7)===ym).reduce((s,c)=>s+num(c.valor),0); const totalMes=jaTem+novoPorMes[ym]; if(totalMes>teto) estouros.push("• "+fmtMesLabel(ym)+": "+reais(totalMes)+" (teto "+reais(teto)+")"); });
     if(estouros.length && !confirm("⚠️ Este acordo ultrapassa o teto mensal de parcelas de "+lojaNome(loja)+" em:\n\n"+estouros.join("\n")+"\n\nIsso pode comprometer o caixa. Criar mesmo assim?")) return;
+  }
+  const tRede=tetoRede();
+  if(tRede>0){
+    const estR=[];
+    Object.keys(novoPorMes).sort().forEach(ym=>{ const jaR=obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&(c.vencimento||"").slice(0,7)===ym).reduce((s,c)=>s+num(c.valor),0); const totalMes=jaR+novoPorMes[ym]; if(totalMes>tRede) estR.push("• "+fmtMesLabel(ym)+": "+reais(totalMes)+" (teto rede "+reais(tRede)+")"); });
+    if(estR.length && !confirm("⚠️ Este acordo ultrapassa o teto mensal da REDE (as duas lojas) em:\n\n"+estR.join("\n")+"\n\nCriar mesmo assim?")) return;
   }
   const acordoId="ac"+Date.now();
   DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria:desc,detalhe:"Negociada — "+n+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(total/n),valor:total,onde:"",prazo:"1º venc. "+fmtData(venc),status:"Parcelada",origem:"negociada",acordoId,categoriaSaida:cat,frequencia:freq,criadoEm:Date.now()});
@@ -1986,10 +1992,12 @@ function renderDividas(el){
 
 /* ===================== PAINEL DE DÍVIDAS (gestão + teto mensal) ============ */
 function tetoDividaLoja(l){ return num((STATE.config&&STATE.config.tetoDivida&&STATE.config.tetoDivida[l])||0); }
-function tetoDividaScope(){ return lojaFiltro!=="todos" ? tetoDividaLoja(lojaFiltro) : LOJAS.reduce((t,l)=>t+tetoDividaLoja(l.id),0); }
+function tetoRede(){ return num((STATE.config&&STATE.config.tetoDivida&&STATE.config.tetoDivida.rede)||0); }
+// Teto no escopo atual: loja específica → teto da loja; "todos" → teto da REDE (se definido) ou soma das lojas.
+function tetoDividaScope(){ if(lojaFiltro!=="todos") return tetoDividaLoja(lojaFiltro); return tetoRede()>0 ? tetoRede() : LOJAS.reduce((t,l)=>t+tetoDividaLoja(l.id),0); }
 // Soma das parcelas de dívidas negociadas (contas origem "divida") com vencimento no mês ym.
 function parcelasDividaMes(ym){ return obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&daLoja(c)&&(c.vencimento||"").slice(0,7)===ym).reduce((s,c)=>s+num(c.valor),0); }
-function salvarTetoDivida(){ const loja=val("td_loja")||lojaPadrao(); const v=num(val("td_val")); const cur=Object.assign({},(STATE.config&&STATE.config.tetoDivida)||{}); cur[loja]=v; DB.update("config",{tetoDivida:cur}); toast("Teto de "+lojaNome(loja)+" definido em "+reais(v)+"/mês."); }
+function salvarTetoDivida(){ const loja=val("td_loja")||lojaPadrao(); const v=num(val("td_val")); const cur=Object.assign({},(STATE.config&&STATE.config.tetoDivida)||{}); cur[loja]=v; DB.update("config",{tetoDivida:cur}); toast("Teto da "+(loja==="rede"?"Rede":lojaNome(loja))+" definido em "+reais(v)+"/mês."); }
 function renderPainelDividas(el){
   document.getElementById("pgSub").textContent="Gestão das dívidas: exposição, teto mensal de parcelas e projeção para não comprometer o caixa.";
   const escopo = lojaFiltro==="todos"?"a rede (as duas lojas)":lojaNome(lojaFiltro);
@@ -2023,11 +2031,12 @@ function renderPainelDividas(el){
   </div></div>`;
   html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>Teto mensal de parcelas (por loja)</h3><p>Quanto, no máximo, pode comprometer por mês com parcelas de dívidas — para não apertar o caixa. Ao criar um acordo acima disso, o sistema avisa.</p></div><div class="bd">
     <div class="row">
-      <div><label class="f">Loja</label><select id="td_loja">${LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+      <div><label class="f">Loja</label><select id="td_loja"><option value="rede">Rede (as duas lojas)</option>${LOJAS.map(l=>`<option value="${l.id}">${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
       <div><label class="f">Teto (R$/mês)</label><input id="td_val" inputmode="decimal" placeholder="0,00"></div>
       <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="salvarTetoDivida()">Salvar teto</button></div>
     </div>
-    <div class="small muted" style="margin-top:8px">${LOJAS.map(l=>esc(lojaNome(l.id))+": "+(tetoDividaLoja(l.id)>0?reais(tetoDividaLoja(l.id))+"/mês":"não definido")).join(" · ")} · <b>Rede: ${reais(LOJAS.reduce((t,l)=>t+tetoDividaLoja(l.id),0))}/mês</b></div>
+    <div class="small muted" style="margin-top:8px">${LOJAS.map(l=>esc(lojaNome(l.id))+": "+(tetoDividaLoja(l.id)>0?reais(tetoDividaLoja(l.id))+"/mês":"não definido")).join(" · ")} · <b>Rede: ${tetoRede()>0?reais(tetoRede())+"/mês (definido)":reais(LOJAS.reduce((t,l)=>t+tetoDividaLoja(l.id),0))+"/mês (soma das lojas)"}</b></div>
+    <div class="small muted" style="margin-top:4px">Dica: para um teto único das duas empresas, escolha <b>Rede (as duas lojas)</b>. Ele vale quando o filtro do topo está em "Todos".</div>
   </div></div>`;
   html+=`<div class="card"><div class="hd"><h3>Acordos negociados</h3></div><div class="bd">${
     negociadas.length? `<table><thead><tr><th>Loja</th><th>Acordo</th><th class="r">Saldo</th><th class="r">Parcelas</th><th>Próx. venc.</th></tr></thead><tbody>${
