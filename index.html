@@ -899,11 +899,43 @@ function renderSaidas(el){
     <button class="btn red" style="margin-top:12px" onclick="addSaida()">Lançar saída</button>
   </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Saídas (${sai.length})</h3></div><div class="bd">
-    ${sai.length? tabela(["Data","Loja","Categoria","Grupo","Fornecedor","Descrição","Valor",""], sai.map(s=>[
-      fmtData(s.data), `<span class="pill">${esc(lojaNome(s.loja))}</span>`, catLabel(s.categoria), s.grupo==="PRODUCAO"?"Produção":"Operacional", esc(s.fornecedor||"—"), esc(s.descricao||"—"),
-      {r:true,h:`<b class="neg">${reais(s.valor)}</b>`}, {r:true,h:`<button class="btn ghost sm" onclick="removerMov('saidas','${s._id}')">excluir</button>`}
-    ])) : `<div class="empty">Nenhuma saída ainda.</div>`}
+    ${sai.length? `<table><thead><tr><th>Data</th><th>Loja</th><th>Categoria</th><th>Fornecedor</th><th>Descrição</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
+      sai.map(s=> s._id===saidaEditId ? linhaEdicaoSaida(s) : `<tr>
+        <td>${fmtData(s.data)}</td>
+        <td><span class="pill">${esc(lojaNome(s.loja))}</span></td>
+        <td>${catLabel(s.categoria)}</td>
+        <td class="muted">${esc(s.fornecedor||"—")}</td>
+        <td class="muted">${esc(s.descricao||"—")}</td>
+        <td class="r"><b class="neg">${reais(s.valor)}</b></td>
+        <td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="editarSaidaInicio('${s._id}')">editar</button> <button class="btn ghost sm" onclick="removerMov('saidas','${s._id}')">excluir</button></td>
+      </tr>`).join("")
+    }</tbody></table>` : `<div class="empty">Nenhuma saída ainda.</div>`}
   </div></div>`;
+}
+let saidaEditId=null;
+function linhaEdicaoSaida(s){
+  const optCat=categoriasSaidaTodas().map(c=>`<option value="${c.chave}"${c.chave===s.categoria?" selected":""}>${esc(c.label)}</option>`).join("");
+  const optLoja=LOJAS.map(l=>`<option value="${l.id}"${l.id===s.loja?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("");
+  return `<tr><td colspan="7" style="background:#f6f2fe;padding:12px">
+    <div class="row">
+      <div><label class="f">Data</label><input type="date" id="es_data_${s._id}" value="${(s.data||"").slice(0,10)}"></div>
+      <div><label class="f">Valor (R$)</label><input id="es_val_${s._id}" inputmode="decimal" value="${s.valor!=null?String(s.valor).replace(".",","):""}"></div>
+      <div><label class="f">Categoria</label><select id="es_cat_${s._id}">${optCat}</select></div>
+      <div><label class="f">Estabelecimento</label><select id="es_loja_${s._id}">${optLoja}</select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:1"><label class="f">Fornecedor</label><input id="es_forn_${s._id}" value="${esc(s.fornecedor||"")}"></div>
+      <div style="flex:2"><label class="f">Descrição</label><input id="es_desc_${s._id}" value="${esc(s.descricao||"")}"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="salvarEdicaoSaida('${s._id}')">Salvar</button></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="saidaEditId=null;render()">Cancelar</button></div>
+    </div>
+  </td></tr>`;
+}
+function editarSaidaInicio(id){ saidaEditId=id; render(); }
+function salvarEdicaoSaida(id){
+  const categoria=val("es_cat_"+id);
+  DB.update("caixa/saidas/"+id,{ data:val("es_data_"+id)||hojeISO(), valor:num(val("es_val_"+id)), categoria, grupo:grupoDe(categoria), fornecedor:val("es_forn_"+id)||null, descricao:val("es_desc_"+id)||null });
+  saidaEditId=null; toast("Saída atualizada.");
 }
 function autoCat(){ const s=sugerirCategoria(val("s_desc")); if(s){ const sel=document.getElementById("s_cat"); if(sel) sel.value=s; } }
 function tabela(cabec, linhas){
