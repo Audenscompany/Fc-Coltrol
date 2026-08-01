@@ -552,6 +552,7 @@ const PAGINAS = [
   {id:"fluxo",icon:"📈",label:"Fluxo de caixa",grupo:"FINANCEIRO",render:renderFluxo},
   {id:"dre",icon:"📑",label:"DRE (resultado)",grupo:"FINANCEIRO",render:renderDRE},
   {id:"dividas",icon:"🏛️",label:"Dívidas (CNPJ)",grupo:"FINANCEIRO",render:renderDividas},
+  {id:"paineldiv",icon:"📊",label:"Painel de dívidas",grupo:"FINANCEIRO",render:renderPainelDividas},
   {id:"custos",icon:"📒",label:"Custos fixos/variáveis",grupo:"CUSTOS E OPERAÇÃO",render:renderCustos},
   {id:"precificacao",icon:"🏷️",label:"Precificação",grupo:"CUSTOS E OPERAÇÃO",render:renderPrecificacao},
   {id:"categorias",icon:"🗂️",label:"Categorias",grupo:"CONFIGURAÇÕES",render:renderCategorias},
@@ -584,7 +585,7 @@ function render(){
   if(!sessaoValida()) return;
   const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
-  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos","dividas"].includes(paginaAtual);
+  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos","dividas","paineldiv"].includes(paginaAtual);
   const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
       <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
       ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}
@@ -1894,14 +1895,20 @@ function criarDividaParcelada(){
   const freq=val("nd_freq")||"mensal";
   if(!desc||total<=0) return toast("Preencha a descrição e o valor total negociado.");
   if(!cat) return toast("Escolha a categoria (para entrar certo no DRE).");
+  // Monta as parcelas (sem gravar ainda) para poder checar o teto mensal.
+  let acum=0; const parcelas=[];
+  for(let k=1;k<=n;k++){ const p=k===n?Math.round((total-acum)*100)/100:Math.round(total/n*100)/100; acum+=p; parcelas.push({k,valor:p,venc:vencParcela(venc,freq,k-1)}); }
+  // Teto mensal de parcelas de dívida (protege o caixa). Só bloqueia se estourar.
+  const teto=tetoDividaLoja(loja);
+  if(teto>0){
+    const novoPorMes={}; parcelas.forEach(p=>{ const ym=(p.venc||"").slice(0,7); novoPorMes[ym]=(novoPorMes[ym]||0)+p.valor; });
+    const estouros=[];
+    Object.keys(novoPorMes).sort().forEach(ym=>{ const jaTem=obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&(c.loja||"")===loja&&(c.vencimento||"").slice(0,7)===ym).reduce((s,c)=>s+num(c.valor),0); const totalMes=jaTem+novoPorMes[ym]; if(totalMes>teto) estouros.push("• "+fmtMesLabel(ym)+": "+reais(totalMes)+" (teto "+reais(teto)+")"); });
+    if(estouros.length && !confirm("⚠️ Este acordo ultrapassa o teto mensal de parcelas de "+lojaNome(loja)+" em:\n\n"+estouros.join("\n")+"\n\nIsso pode comprometer o caixa. Criar mesmo assim?")) return;
+  }
   const acordoId="ac"+Date.now();
   DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria:desc,detalhe:"Negociada — "+n+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(total/n),valor:total,onde:"",prazo:"1º venc. "+fmtData(venc),status:"Parcelada",origem:"negociada",acordoId,categoriaSaida:cat,frequencia:freq,criadoEm:Date.now()});
-  let acum=0;
-  for(let k=1;k<=n;k++){
-    const parcela = k===n ? Math.round((total-acum)*100)/100 : Math.round(total/n*100)/100;
-    acum+=parcela;
-    DB.push("contas",{descricao:desc+" — parcela "+k+"/"+n,valor:parcela,vencimento:vencParcela(venc,freq,k-1),categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja,recorrencia:"nenhuma",status:"aberta",acordoId,origem:"divida",criadoEm:Date.now()});
-  }
+  parcelas.forEach(p=>DB.push("contas",{descricao:desc+" — parcela "+p.k+"/"+n,valor:p.valor,vencimento:p.venc,categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja,recorrencia:"nenhuma",status:"aberta",acordoId,origem:"divida",criadoEm:Date.now()}));
   toast(n+" parcela(s) "+(FREQ_LABEL[freq]||"")+" criadas em Contas a pagar.");
 }
 function renderDividas(el){
@@ -1974,6 +1981,61 @@ function renderDividas(el){
       <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addDivida()">Adicionar</button></div>
     </div>
   </div></div>`;
+  el.innerHTML=html;
+}
+
+/* ===================== PAINEL DE DÍVIDAS (gestão + teto mensal) ============ */
+function tetoDividaLoja(l){ return num((STATE.config&&STATE.config.tetoDivida&&STATE.config.tetoDivida[l])||0); }
+function tetoDividaScope(){ return lojaFiltro!=="todos" ? tetoDividaLoja(lojaFiltro) : LOJAS.reduce((t,l)=>t+tetoDividaLoja(l.id),0); }
+// Soma das parcelas de dívidas negociadas (contas origem "divida") com vencimento no mês ym.
+function parcelasDividaMes(ym){ return obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&daLoja(c)&&(c.vencimento||"").slice(0,7)===ym).reduce((s,c)=>s+num(c.valor),0); }
+function salvarTetoDivida(){ const loja=val("td_loja")||lojaPadrao(); const v=num(val("td_val")); const cur=Object.assign({},(STATE.config&&STATE.config.tetoDivida)||{}); cur[loja]=v; DB.update("config",{tetoDivida:cur}); toast("Teto de "+lojaNome(loja)+" definido em "+reais(v)+"/mês."); }
+function renderPainelDividas(el){
+  document.getElementById("pgSub").textContent="Gestão das dívidas: exposição, teto mensal de parcelas e projeção para não comprometer o caixa.";
+  const escopo = lojaFiltro==="todos"?"a rede (as duas lojas)":lojaNome(lojaFiltro);
+  const teto = tetoDividaScope();
+  const ym0=mesAtual();
+  const compAtual = parcelasDividaMes(ym0);
+  const dividas = obj2arr(STATE.dividas).filter(daLoja);
+  const exposicao = dividas.reduce((s,d)=>s+valorEmAberto(d),0);
+  const negociadas = dividas.filter(d=>d.origem==="negociada");
+  const meses=[]; for(let i=0;i<12;i++){ const d=new Date(ym0+"-01T00:00:00"); d.setMonth(d.getMonth()+i); meses.push(d.toISOString().slice(0,7)); }
+  const folga = teto>0? teto-compAtual : null;
+  const pctUso = teto>0? Math.min(100,compAtual/teto*100):0;
+  const cor = pctUso>=100?"#b81f1f":pctUso>=80?"#c8911b":"#2f8a2c";
+  let html=`
+  <div class="grid g4" style="margin-bottom:14px">
+    <div class="kpi"><div class="ic r">🏛️</div><div><div class="kl">Exposição total</div><div class="kv neg">${reais(exposicao)}</div><div class="kh">saldo em aberto · ${esc(escopo)}</div></div></div>
+    <div class="kpi"><div class="ic y">📅</div><div><div class="kl">Parcelas ${fmtMesLabel(ym0)}</div><div class="kv">${reais(compAtual)}</div><div class="kh">${teto>0?("de "+reais(teto)+" (teto)"):"sem teto definido"}</div></div></div>
+    <div class="kpi"><div class="ic ${folga==null?'b':(folga>=0?'g':'r')}">🛟</div><div><div class="kl">Folga do mês</div><div class="kv ${folga!=null&&folga<0?'neg':'pos'}">${teto>0?reais(folga):'—'}</div><div class="kh">ainda pode negociar</div></div></div>
+    <div class="kpi"><div class="ic b">🤝</div><div><div class="kl">Acordos ativos</div><div class="kv">${negociadas.length}</div></div></div>
+  </div>`;
+  if(teto>0) html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>Uso do teto — ${fmtMesLabel(ym0)}</h3></div><div class="bd">
+    <div style="height:14px;background:#eef0ee;border-radius:8px;overflow:hidden"><div style="height:100%;width:${pctUso.toFixed(0)}%;background:${cor}"></div></div>
+    <div class="small muted" style="margin-top:6px">${reais(compAtual)} de ${reais(teto)} (${pctUso.toFixed(0)}%)${folga!=null&&folga<0?` — <b class="neg">acima do teto</b>`:''}</div>
+  </div></div>`;
+  html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>Parcelas de dívidas — próximos 12 meses</h3><p>Compromisso mensal com acordos vs teto. Meses acima do teto ficam em vermelho.</p></div><div class="bd">
+    <table><thead><tr><th>Mês</th><th class="r">Parcelas</th><th class="r">Teto</th><th class="r">Folga</th><th>Situação</th></tr></thead><tbody>${
+      meses.map(ym=>{ const v=parcelasDividaMes(ym); const fg=teto>0?teto-v:null; const est=teto>0&&v>teto; const bar=teto>0?Math.min(100,v/teto*100):0;
+        return `<tr><td>${fmtMesLabel(ym)}</td><td class="r"><b>${reais(v)}</b></td><td class="r muted">${teto>0?reais(teto):'—'}</td><td class="r ${fg!=null&&fg<0?'neg':''}">${teto>0?reais(fg):'—'}</td><td>${teto>0?`<span class="badge ${est?'b-red':(bar>=80?'b-gold':'b-green')}">${est?'acima do teto':(bar>=80?'perto do teto':'ok')}</span>`:'<span class="muted">—</span>'}</td></tr>`;
+      }).join("")
+    }</tbody></table>
+  </div></div>`;
+  html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>Teto mensal de parcelas (por loja)</h3><p>Quanto, no máximo, pode comprometer por mês com parcelas de dívidas — para não apertar o caixa. Ao criar um acordo acima disso, o sistema avisa.</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Loja</label><select id="td_loja">${LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+      <div><label class="f">Teto (R$/mês)</label><input id="td_val" inputmode="decimal" placeholder="0,00"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="salvarTetoDivida()">Salvar teto</button></div>
+    </div>
+    <div class="small muted" style="margin-top:8px">${LOJAS.map(l=>esc(lojaNome(l.id))+": "+(tetoDividaLoja(l.id)>0?reais(tetoDividaLoja(l.id))+"/mês":"não definido")).join(" · ")} · <b>Rede: ${reais(LOJAS.reduce((t,l)=>t+tetoDividaLoja(l.id),0))}/mês</b></div>
+  </div></div>`;
+  html+=`<div class="card"><div class="hd"><h3>Acordos negociados</h3></div><div class="bd">${
+    negociadas.length? `<table><thead><tr><th>Loja</th><th>Acordo</th><th class="r">Saldo</th><th class="r">Parcelas</th><th>Próx. venc.</th></tr></thead><tbody>${
+      negociadas.sort((a,b)=>valorEmAberto(b)-valorEmAberto(a)).map(d=>{ const a=acordoInfo(d); const prox=obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId&&c.status!=="paga").sort((x,y)=>(x.vencimento||"").localeCompare(y.vencimento||""))[0];
+        return `<tr><td><span class="pill">${esc(lojaNome(d.loja))}</span></td><td>${esc(d.categoria)}</td><td class="r neg"><b>${reais(valorEmAberto(d))}</b></td><td class="r">${a?a.pagas+"/"+a.total:"—"}</td><td>${prox?fmtData(prox.vencimento):"—"}</td></tr>`;
+      }).join("")
+    }</tbody></table>` : `<div class="empty">Nenhum acordo parcelado ainda. Crie em <a class="linkmais" onclick="irPara('dividas')">Dívidas (CNPJ)</a>.</div>`
+  }</div></div>`;
   el.innerHTML=html;
 }
 
