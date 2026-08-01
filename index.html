@@ -1849,6 +1849,11 @@ function removerDivida(id){ if(confirm("Excluir esta dívida?")){ DB.remove("div
 function addDivida(){ const loja=val("dv_loja")||lojaPadrao(); const categoria=val("dv_cat"); if(!categoria) return toast("Informe a categoria."); DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria,detalhe:val("dv_det")||"",valor:num(val("dv_val")),onde:val("dv_onde")||"",prazo:"",status:val("dv_status")||"A negociar",origem:"manual",criadoEm:Date.now()}); toast("Dívida adicionada."); }
 // Soma m meses a uma data ISO (mantém o dia; ajusta fim de mês).
 function addMesesISO(iso,m){ const d=new Date((iso||hojeISO())+"T00:00:00"); const dia=d.getDate(); d.setMonth(d.getMonth()+m); if(d.getDate()<dia) d.setDate(0); return d.toISOString().slice(0,10); }
+// Soma dias a uma data ISO (para frequências semanal/quinzenal).
+function addDiasISO(iso,dias){ const d=new Date((iso||hojeISO())+"T00:00:00"); d.setDate(d.getDate()+dias); return d.toISOString().slice(0,10); }
+// Vencimento da k-ésima parcela (k a partir de 0) conforme a frequência.
+function vencParcela(venc,freq,k){ if(freq==="semanal") return addDiasISO(venc,7*k); if(freq==="quinzenal") return addDiasISO(venc,14*k); return addMesesISO(venc,k); }
+const FREQ_LABEL={mensal:"mensal",quinzenal:"quinzenal",semanal:"semanal"};
 // Info do acordo (parcelas): quantas pagas, total e saldo em aberto (contas ligadas por acordoId).
 function acordoInfo(d){ if(!d||!d.acordoId) return null; const cs=obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId); if(!cs.length) return null; const pagas=cs.filter(c=>c.status==="paga").length; const aberto=cs.filter(c=>c.status!=="paga").reduce((s,c)=>s+num(c.valor),0); return {pagas,total:cs.length,aberto}; }
 // Valor "vivo" da dívida: se for parcelada, o saldo das parcelas em aberto; senão o valor cadastrado.
@@ -1859,17 +1864,18 @@ function criarDividaParcelada(){
   const desc=val("nd_desc"), cat=val("nd_cat");
   const total=num(val("nd_total")), n=Math.max(1,Math.round(num(val("nd_parcelas"))||1));
   const venc=val("nd_venc")||hojeISO();
+  const freq=val("nd_freq")||"mensal";
   if(!desc||total<=0) return toast("Preencha a descrição e o valor total negociado.");
   if(!cat) return toast("Escolha a categoria (para entrar certo no DRE).");
   const acordoId="ac"+Date.now();
-  DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria:desc,detalhe:"Negociada — "+n+"× de "+reais(total/n),valor:total,onde:"",prazo:"1º venc. "+fmtData(venc),status:"Parcelada",origem:"negociada",acordoId,categoriaSaida:cat,criadoEm:Date.now()});
+  DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria:desc,detalhe:"Negociada — "+n+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(total/n),valor:total,onde:"",prazo:"1º venc. "+fmtData(venc),status:"Parcelada",origem:"negociada",acordoId,categoriaSaida:cat,frequencia:freq,criadoEm:Date.now()});
   let acum=0;
   for(let k=1;k<=n;k++){
     const parcela = k===n ? Math.round((total-acum)*100)/100 : Math.round(total/n*100)/100;
     acum+=parcela;
-    DB.push("contas",{descricao:desc+" — parcela "+k+"/"+n,valor:parcela,vencimento:addMesesISO(venc,k-1),categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja,recorrencia:"nenhuma",status:"aberta",acordoId,origem:"divida",criadoEm:Date.now()});
+    DB.push("contas",{descricao:desc+" — parcela "+k+"/"+n,valor:parcela,vencimento:vencParcela(venc,freq,k-1),categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja,recorrencia:"nenhuma",status:"aberta",acordoId,origem:"divida",criadoEm:Date.now()});
   }
-  toast(n+" parcela(s) criadas em Contas a pagar.");
+  toast(n+" parcela(s) "+(FREQ_LABEL[freq]||"")+" criadas em Contas a pagar.");
 }
 function renderDividas(el){
   document.getElementById("pgSub").textContent="Dívidas dos CNPJs (Receita Federal / PGFN), separadas por empresa.";
@@ -1921,10 +1927,11 @@ function renderDividas(el){
     <div class="row" style="margin-top:10px">
       <div><label class="f">Valor total negociado (R$)</label><input id="nd_total" inputmode="decimal" placeholder="0,00"></div>
       <div><label class="f">Nº de parcelas</label><input id="nd_parcelas" inputmode="numeric" placeholder="ex.: 12" value="12"></div>
+      <div><label class="f">Frequência</label><select id="nd_freq"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal (14 dias)</option><option value="semanal">Semanal (7 dias)</option></select></div>
       <div><label class="f">1º vencimento</label><input type="date" id="nd_venc" value="${hojeISO()}"></div>
       <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="criarDividaParcelada()">Gerar parcelas</button></div>
     </div>
-    <div class="small muted" style="margin-top:8px">As parcelas são mensais e iguais (a última ajusta os centavos). Para desfazer, exclua a dívida e as parcelas em Contas a pagar.</div>
+    <div class="small muted" style="margin-top:8px">As parcelas seguem a frequência escolhida e são iguais (a última ajusta os centavos). Para desfazer, exclua a dívida e as parcelas em Contas a pagar.</div>
   </div></div>`;
   // === Adicionar dívida simples (sem parcelas) ===
   html+=`<div class="card"><div class="hd"><h3>Adicionar dívida (manual, sem parcelas)</h3></div><div class="bd">
