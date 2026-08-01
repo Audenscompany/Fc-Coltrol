@@ -1847,15 +1847,39 @@ function importarDividas(){
 function mudarStatusDivida(id,v){ DB.update("dividas/"+id,{status:v}); toast("Status atualizado."); }
 function removerDivida(id){ if(confirm("Excluir esta dívida?")){ DB.remove("dividas/"+id); } }
 function addDivida(){ const loja=val("dv_loja")||lojaPadrao(); const categoria=val("dv_cat"); if(!categoria) return toast("Informe a categoria."); DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria,detalhe:val("dv_det")||"",valor:num(val("dv_val")),onde:val("dv_onde")||"",prazo:"",status:val("dv_status")||"A negociar",origem:"manual",criadoEm:Date.now()}); toast("Dívida adicionada."); }
+// Soma m meses a uma data ISO (mantém o dia; ajusta fim de mês).
+function addMesesISO(iso,m){ const d=new Date((iso||hojeISO())+"T00:00:00"); const dia=d.getDate(); d.setMonth(d.getMonth()+m); if(d.getDate()<dia) d.setDate(0); return d.toISOString().slice(0,10); }
+// Info do acordo (parcelas): quantas pagas, total e saldo em aberto (contas ligadas por acordoId).
+function acordoInfo(d){ if(!d||!d.acordoId) return null; const cs=obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId); if(!cs.length) return null; const pagas=cs.filter(c=>c.status==="paga").length; const aberto=cs.filter(c=>c.status!=="paga").reduce((s,c)=>s+num(c.valor),0); return {pagas,total:cs.length,aberto}; }
+// Valor "vivo" da dívida: se for parcelada, o saldo das parcelas em aberto; senão o valor cadastrado.
+function valorEmAberto(d){ const a=acordoInfo(d); return a? a.aberto : num(d.valor); }
+// Cria uma dívida NEGOCIADA e gera as parcelas em Contas a pagar (entram no fluxo e, ao pagar, no DRE).
+function criarDividaParcelada(){
+  const loja=val("nd_loja")||lojaPadrao();
+  const desc=val("nd_desc"), cat=val("nd_cat");
+  const total=num(val("nd_total")), n=Math.max(1,Math.round(num(val("nd_parcelas"))||1));
+  const venc=val("nd_venc")||hojeISO();
+  if(!desc||total<=0) return toast("Preencha a descrição e o valor total negociado.");
+  if(!cat) return toast("Escolha a categoria (para entrar certo no DRE).");
+  const acordoId="ac"+Date.now();
+  DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria:desc,detalhe:"Negociada — "+n+"× de "+reais(total/n),valor:total,onde:"",prazo:"1º venc. "+fmtData(venc),status:"Parcelada",origem:"negociada",acordoId,categoriaSaida:cat,criadoEm:Date.now()});
+  let acum=0;
+  for(let k=1;k<=n;k++){
+    const parcela = k===n ? Math.round((total-acum)*100)/100 : Math.round(total/n*100)/100;
+    acum+=parcela;
+    DB.push("contas",{descricao:desc+" — parcela "+k+"/"+n,valor:parcela,vencimento:addMesesISO(venc,k-1),categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja,recorrencia:"nenhuma",status:"aberta",acordoId,origem:"divida",criadoEm:Date.now()});
+  }
+  toast(n+" parcela(s) criadas em Contas a pagar.");
+}
 function renderDividas(el){
   document.getElementById("pgSub").textContent="Dívidas dos CNPJs (Receita Federal / PGFN), separadas por empresa.";
   const todas=obj2arr(STATE.dividas);
   const temDados=todas.length>0;
   const lojas = lojaFiltro!=="todos"?[lojaFiltro]:LOJAS.map(l=>l.id);
-  const totalGeral=todas.filter(daLoja).reduce((s,d)=>s+num(d.valor),0);
+  const totalGeral=todas.filter(daLoja).reduce((s,d)=>s+valorEmAberto(d),0);
   let html=`<div class="grid g3" style="margin-bottom:14px">
     <div class="stat"><div class="lbl">Exposição total (CNPJs)</div><div class="val neg">${reais(totalGeral)}</div><div class="hint">${lojaFiltro==="todos"?"as duas empresas":esc(lojaNome(lojaFiltro))}</div></div>
-    ${LOJAS.map(l=>{const t=todas.filter(d=>(d.loja||"")===l.id).reduce((s,d)=>s+num(d.valor),0); return `<div class="stat"><div class="lbl">${esc(lojaNome(l.id))}</div><div class="val">${reais(t)}</div><div class="hint">${esc(CNPJ_LOJA[l.id]||"")}</div></div>`;}).join("")}
+    ${LOJAS.map(l=>{const t=todas.filter(d=>(d.loja||"")===l.id).reduce((s,d)=>s+valorEmAberto(d),0); return `<div class="stat"><div class="lbl">${esc(lojaNome(l.id))}</div><div class="val">${reais(t)}</div><div class="hint">${esc(CNPJ_LOJA[l.id]||"")}</div></div>`;}).join("")}
   </div>
   <div class="card" style="margin-bottom:14px"><div class="bd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
     <div class="muted">${temDados?"Dados importados da planilha de dívidas. Você pode reimportar para restaurar o original.":"Importe as dívidas dos CNPJs da sua planilha (consolidado por categoria + detalhe por competência)."}</div>
@@ -1866,19 +1890,19 @@ function renderDividas(el){
       const ds=todas.filter(d=>(d.loja||"")===loja).sort((a,b)=>num(b.valor)-num(a.valor));
       if(!ds.length) return;
       const det=obj2arr(STATE.dividasDet).filter(r=>(r.loja||"")===loja).sort((a,b)=>(a.tributo||"").localeCompare(b.tributo||"")||(a.periodo||"").localeCompare(b.periodo||""));
-      const tot=ds.reduce((s,d)=>s+num(d.valor),0);
+      const tot=ds.reduce((s,d)=>s+valorEmAberto(d),0);
       const totDet=det.reduce((s,r)=>s+num(r.consolidado),0);
-      html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>${esc(lojaNome(loja))} <span class="pill">${esc(CNPJ_LOJA[loja]||"")}</span></h3><p>Total consolidado: <b class="neg">${reais(tot)}</b></p></div><div class="bd">
+      html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>${esc(lojaNome(loja))} <span class="pill">${esc(CNPJ_LOJA[loja]||"")}</span></h3><p>Saldo em aberto: <b class="neg">${reais(tot)}</b></p></div><div class="bd">
         <table><thead><tr><th>Categoria</th><th>Detalhe</th><th class="r">Valor</th><th>Onde negociar</th><th>Prazo / observação</th><th>Status</th><th></th></tr></thead><tbody>${
-          ds.map(d=>`<tr>
-            <td><b>${esc(d.categoria)}</b></td>
-            <td class="muted" style="max-width:260px">${esc(d.detalhe||"—")}</td>
-            <td class="r"><b class="neg">${reais(d.valor)}</b></td>
+          ds.map(d=>{const a=acordoInfo(d); return `<tr>
+            <td><b>${esc(d.categoria)}</b>${d.origem==="negociada"?' <span class="badge b-gold">parcelada</span>':''}</td>
+            <td class="muted" style="max-width:260px">${esc(d.detalhe||"—")}${a?`<br><span class="badge ${a.pagas>=a.total?'b-green':'b-gray'}">${a.pagas}/${a.total} parcelas pagas</span>`:''}</td>
+            <td class="r"><b class="neg">${reais(valorEmAberto(d))}</b>${a&&a.pagas>0?`<br><span class="small muted">de ${reais(d.valor)}</span>`:''}</td>
             <td class="muted" style="max-width:190px">${esc(d.onde||"—")}</td>
             <td class="muted" style="max-width:210px">${esc(d.prazo||"—")}</td>
             <td><select onchange="mudarStatusDivida('${d._id}',this.value)">${optStatusDivida(d.status)}</select></td>
             <td class="r"><button class="btn ghost sm" onclick="removerDivida('${d._id}')">×</button></td>
-          </tr>`).join("")
+          </tr>`;}).join("")
         }</tbody></table>
         ${det.length?`<details style="margin-top:12px"><summary style="cursor:pointer;font-weight:700;color:var(--purple-d)">Ver detalhe por competência (SIEF) — ${det.length} lançamentos · consolidado ${reais(totDet)}</summary>
           <table style="margin-top:10px"><thead><tr><th>Tributo</th><th>Período</th><th>Vencimento</th><th class="r">Valor original</th><th class="r">Saldo devedor</th><th class="r">Consolidado</th></tr></thead><tbody>${
@@ -1886,20 +1910,36 @@ function renderDividas(el){
           }</tbody></table></details>`:""}
       </div></div>`;
     });
-    html+=`<div class="card"><div class="hd"><h3>Adicionar dívida (manual)</h3></div><div class="bd">
-      <div class="row">
-        <div><label class="f">Empresa</label><select id="dv_loja">${LOJAS.map(l=>`<option value="${l.id}">${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
-        <div><label class="f">Categoria</label><input id="dv_cat" placeholder="Ex.: Parcelamento Simples"></div>
-        <div><label class="f">Valor (R$)</label><input id="dv_val" inputmode="decimal" placeholder="0,00"></div>
-        <div><label class="f">Status</label><select id="dv_status">${optStatusDivida("A negociar")}</select></div>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <div style="flex:2"><label class="f">Detalhe</label><input id="dv_det" placeholder="descrição"></div>
-        <div style="flex:2"><label class="f">Onde negociar</label><input id="dv_onde" placeholder="ex.: e-CAC / PGFN"></div>
-        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addDivida()">Adicionar</button></div>
-      </div>
-    </div></div>`;
   }
+  // === Registrar dívida NEGOCIADA (gera parcelas em Contas a pagar) ===
+  html+=`<div class="card" style="margin-bottom:14px;border-color:#e3d9f7"><div class="hd"><h3>💜 Registrar dívida negociada (gerar parcelas)</h3><p>Cria a dívida e lança <b>uma parcela por mês em Contas a pagar</b> — entra no Fluxo de caixa e, ao marcar cada parcela como paga, no DRE. Escolha a categoria certa (ex.: trabalhista → Salários).</p></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Empresa</label><select id="nd_loja">${LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+      <div style="flex:2"><label class="f">Descrição do acordo</label><input id="nd_desc" placeholder="Ex.: Acordo trabalhista — processo 000123"></div>
+      <div><label class="f">Categoria (DRE)</label><select id="nd_cat">${optCategorias()}</select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Valor total negociado (R$)</label><input id="nd_total" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="f">Nº de parcelas</label><input id="nd_parcelas" inputmode="numeric" placeholder="ex.: 12" value="12"></div>
+      <div><label class="f">1º vencimento</label><input type="date" id="nd_venc" value="${hojeISO()}"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="criarDividaParcelada()">Gerar parcelas</button></div>
+    </div>
+    <div class="small muted" style="margin-top:8px">As parcelas são mensais e iguais (a última ajusta os centavos). Para desfazer, exclua a dívida e as parcelas em Contas a pagar.</div>
+  </div></div>`;
+  // === Adicionar dívida simples (sem parcelas) ===
+  html+=`<div class="card"><div class="hd"><h3>Adicionar dívida (manual, sem parcelas)</h3></div><div class="bd">
+    <div class="row">
+      <div><label class="f">Empresa</label><select id="dv_loja">${LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+      <div><label class="f">Categoria</label><input id="dv_cat" placeholder="Ex.: Parcelamento Simples"></div>
+      <div><label class="f">Valor (R$)</label><input id="dv_val" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="f">Status</label><select id="dv_status">${optStatusDivida("A negociar")}</select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:2"><label class="f">Detalhe</label><input id="dv_det" placeholder="descrição"></div>
+      <div style="flex:2"><label class="f">Onde negociar</label><input id="dv_onde" placeholder="ex.: e-CAC / PGFN"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addDivida()">Adicionar</button></div>
+    </div>
+  </div></div>`;
   el.innerHTML=html;
 }
 
