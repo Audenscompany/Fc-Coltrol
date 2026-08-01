@@ -2180,16 +2180,20 @@ function maisDias(iso,n){ const d=new Date(iso+"T00:00:00"); d.setDate(d.getDate
 function cicloFim(ini){ return maisDias(ini,6); }
 function cicloLabel(ini){ return fmtData(ini)+" a "+fmtData(cicloFim(ini)); }
 function cicloDesloca(n){ return maisDias(cicloRef||cicloInicio(hojeISO()), 7*n); }
-function colabPorNome(){ const m={}; obj2arr(STATE.colaboradores).forEach(c=>{ m[norm(c.nome)]=c; }); return m; }
+// Identidade por PRIMEIRO nome; se dois colaboradores têm o mesmo primeiro nome, usa o segundo.
+function tokensNome(s){ return norm(s).replace(/[^A-Z0-9 ]/g," ").split(" ").filter(Boolean); }
+function chaveColab(nome, lista){ const pn=tokensNome(nome)[0]||""; const mesmo=lista.filter(c=>(tokensNome(c.nome)[0]||"")===pn); if(mesmo.length>1) return pn+"|"+(tokensNome(nome)[1]||""); return pn; }
 // Calcula o que cada colaborador recebe no ciclo [ini,fim].
 function pagamentoCiclo(ini, fim){
   const dias=obj2arr(STATE.colabDias).filter(d=>(d.data||"")>=ini && (d.data||"")<=fim);
-  const cb=colabPorNome(); const pg={};
-  const get=(nome,tipo)=>{ const k=norm(nome); if(!pg[k]){ const c=cb[k]; pg[k]={nome:String(nome).trim(),tipo,dias:0,diaria:0,taxa:0,moto:0,cadastrado:!!c,clt:c?!!c.clt:false}; } return pg[k]; };
+  const lista=obj2arr(STATE.colaboradores);
+  const cb={}; lista.forEach(c=>{ cb[chaveColab(c.nome,lista)]=c; });
+  const pg={};
+  const get=(nome,tipo)=>{ const k=chaveColab(nome,lista); if(!pg[k]){ const c=cb[k]; pg[k]={nome:(c?c.nome:String(nome).trim()),tipo,dias:0,diaria:0,taxa:0,moto:0,cadastrado:!!c,clt:c?!!c.clt:false}; } return pg[k]; };
   dias.forEach(d=>{
     const salao=(d.salao||[]).map(n=>String(n).trim()).filter(Boolean);
     const nS=salao.length; const taxaPP=nS>0?num(d.taxaServico)/nS:0;
-    salao.forEach(nome=>{ const p=get(nome,"salao"); const c=cb[norm(nome)]; p.dias++; if(!(c&&c.clt)) p.diaria+=(c?num(c.diaria):0); p.taxa+=taxaPP; });
+    salao.forEach(nome=>{ const p=get(nome,"salao"); const c=cb[chaveColab(nome,lista)]; p.dias++; if(!(c&&c.clt)) p.diaria+=(c?num(c.diaria):0); p.taxa+=taxaPP; });
     (d.motoboys||[]).forEach(m=>{ if(!m||!m.nome) return; const p=get(m.nome,"motoboy"); p.tipo="motoboy"; p.dias++; p.moto+=num(m.valor); });
   });
   return Object.values(pg).map(p=>Object.assign(p,{total:p.diaria+p.taxa+p.moto})).sort((a,b)=>b.total-a.total);
