@@ -191,6 +191,18 @@
   .diabadge b{font-size:15px;color:#1f2937} .diabadge span{font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.5px;margin-top:2px}
   .linkmais{color:var(--purple-d);font-weight:700;cursor:pointer;text-decoration:none;font-size:13px}
   .linkmais:hover{text-decoration:underline}
+  /* Calendário */
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .calhd{text-align:center;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;padding:4px 0}
+  .calcell{min-height:76px;border:1px solid var(--line);border-radius:10px;padding:6px;cursor:pointer;background:#fff;display:flex;flex-direction:column;gap:3px}
+  .calcell:hover{border-color:var(--purple-l)}
+  .calcell.vazio{background:transparent;border:none;cursor:default}
+  .calcell.hoje{border-color:var(--purple);box-shadow:0 0 0 2px rgba(91,43,176,.15)}
+  .calcell.sel{background:#f3effb;border-color:var(--purple)}
+  .caldia{font-weight:700;font-size:13px}
+  .calbadge{font-size:10px;font-weight:700;border-radius:6px;padding:1px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .calbadge.pagar{background:#fde3e3;color:var(--red-d)} .calbadge.receber{background:#e3f4e1;color:var(--green-d)}
+  @media(max-width:700px){.calcell{min-height:56px;padding:4px}.calbadge{font-size:8px;padding:1px 3px}}
   /* Login */
   #login{position:fixed;inset:0;background:linear-gradient(135deg,#3a1a6a,#1c0d3a);display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
   .login-card{background:#fff;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:32px;width:100%;max-width:380px;text-align:center}
@@ -550,6 +562,7 @@ const PAGINAS = [
   {id:"contas",icon:"🧾",label:"Contas a pagar",grupo:"FINANCEIRO",render:renderContas},
   {id:"receber",icon:"💰",label:"Contas a receber",grupo:"FINANCEIRO",render:renderReceber},
   {id:"fluxo",icon:"📈",label:"Fluxo de caixa",grupo:"FINANCEIRO",render:renderFluxo},
+  {id:"calendario",icon:"📅",label:"Calendário",grupo:"FINANCEIRO",render:renderCalendario},
   {id:"dre",icon:"📑",label:"DRE (resultado)",grupo:"FINANCEIRO",render:renderDRE},
   {id:"dividas",icon:"🏛️",label:"Dívidas (CNPJ)",grupo:"FINANCEIRO",render:renderDividas},
   {id:"paineldiv",icon:"📊",label:"Painel de dívidas",grupo:"FINANCEIRO",render:renderPainelDividas},
@@ -585,12 +598,12 @@ function render(){
   if(!sessaoValida()) return;
   const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
-  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos","dividas","paineldiv"].includes(paginaAtual);
+  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos","dividas","paineldiv","calendario"].includes(paginaAtual);
   const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
       <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
       ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}
     </select></div>`;
-  const selMes = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","dre"].includes(paginaAtual)? `<div class="tbfld"><label>Mês</label><input type="month" value="${mesRef}" onchange="setMesRef(this.value)"></div>` : "";
+  const selMes = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","dre","calendario"].includes(paginaAtual)? `<div class="tbfld"><label>Mês</label><input type="month" value="${mesRef}" onchange="setMesRef(this.value)"></div>` : "";
   const nm = `<div style="position:relative">
       <button class="btn cta" onclick="toggleNovaMov(event)">+ Nova movimentação</button>
       <div id="novaMovMenu" style="display:none;position:absolute;right:0;top:112%;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 10px 28px rgba(0,0,0,.14);z-index:30;min-width:200px;overflow:hidden">
@@ -716,6 +729,7 @@ function renderDashboard(el){
         <div style="margin-top:6px;text-align:right"><a class="linkmais" onclick="irPara('alertas')">Ver todos os alertas →</a></div>
       </div></div>
     </div>
+    ${cardSemanaDashboard()}
     ${metaDashCard(ym)}`;
 
   destruirCharts();
@@ -1494,6 +1508,65 @@ function renderFluxo(el){
       mov.map(mm=>{acum+=mm.valor;return `<tr><td>${fmtData(mm.data)}</td><td>${esc(mm.desc||"—")}</td><td>${mm.tipo==="entrada"?'<span class="badge b-green">Entrada</span>':'<span class="badge b-red">Saída</span>'}</td><td class="r ${mm.valor>=0?'pos':'neg'}">${reais(mm.valor)}</td><td class="r"><b>${reais(acum)}</b></td></tr>`;}).join("")
     }</tbody></table>` : `<div class="empty">Sem contas a pagar ou receber nos próximos 30 dias. Cadastre em <a class="linkmais" onclick="irPara('contas')">Contas a pagar</a> ou <a class="linkmais" onclick="irPara('receber')">Contas a receber</a>.</div>`}
   </div></div>`;
+}
+
+/* ===================== CALENDÁRIO ======================================= */
+// Contas a pagar e a receber (em aberto) que vencem numa data ISO, respeitando o filtro de loja.
+function contasDoDia(iso){
+  return {
+    pagar: obj2arr(STATE.contas).filter(c=>c.status!=="paga" && daLoja(c) && (c.vencimento||"")===iso).sort((a,b)=>num(b.valor)-num(a.valor)),
+    receber: obj2arr(STATE.receber).filter(c=>c.status!=="recebida" && daLoja(c) && (c.vencimento||"")===iso).sort((a,b)=>num(b.valor)-num(a.valor)),
+  };
+}
+function proximosDiasISO(n){ const arr=[]; const d=new Date(hojeISO()+"T00:00:00"); for(let i=0;i<n;i++){ const x=new Date(d); x.setDate(x.getDate()+i); arr.push(x.toISOString().slice(0,10)); } return arr; }
+const DIA_SEMANA=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+// Card "Contas planejadas da semana" para a Visão financeira (próximos 7 dias).
+function cardSemanaDashboard(){
+  const linhas=proximosDiasISO(7).map(iso=>({iso,dd:contasDoDia(iso)})).filter(x=>x.dd.pagar.length||x.dd.receber.length);
+  const totP=linhas.reduce((s,x)=>s+x.dd.pagar.reduce((a,c)=>a+num(c.valor),0),0);
+  const totR=linhas.reduce((s,x)=>s+x.dd.receber.reduce((a,c)=>a+num(c.valor),0),0);
+  return `<div class="card" style="margin-top:16px"><div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3>🗓️ Contas planejadas da semana</h3><span class="small muted">a pagar <b class="neg">${reais(totP)}</b>${totR>0?` · a receber <b class="pos">${reais(totR)}</b>`:''} · <a class="linkmais" onclick="irPara('calendario')">abrir calendário →</a></span></div><div class="bd">
+    ${linhas.length? linhas.map(x=>`<div style="display:flex;gap:12px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)">
+      <div class="diabadge"><b>${Number(x.iso.slice(8,10))}</b><span>${DIA_SEMANA[new Date(x.iso+"T00:00:00").getDay()]}</span></div>
+      <div style="flex:1">
+        ${x.dd.pagar.map(c=>`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin:2px 0"><span>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></span><span style="white-space:nowrap"><b class="neg">${reais(c.valor)}</b> <button class="btn sm" onclick="pagarConta('${c._id}')">Pagar</button></span></div>`).join("")}
+        ${x.dd.receber.map(c=>`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin:2px 0"><span>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></span><span style="white-space:nowrap"><b class="pos">+${reais(c.valor)}</b> <button class="btn ghost sm" onclick="receberConta('${c._id}')">Receber</button></span></div>`).join("")}
+      </div>
+    </div>`).join("") : `<div class="empty">Nenhuma conta a pagar ou receber nos próximos 7 dias. 🎉</div>`}
+  </div></div>`;
+}
+let diaSelCal=null;
+function renderCalendario(el){
+  const ym=mesRef;
+  document.getElementById("pgSub").textContent="Contas a pagar e a receber do mês — "+fmtMesLabel(ym)+". Clique num dia para ver os detalhes.";
+  const [a,m]=ym.split("-").map(Number);
+  const diasNoMes=new Date(a,m,0).getDate();
+  const inicioSemana=new Date(a,m-1,1).getDay();
+  const hoje=hojeISO();
+  const cells=[]; for(let i=0;i<inicioSemana;i++) cells.push(null);
+  for(let d=1;d<=diasNoMes;d++) cells.push(`${ym}-${String(d).padStart(2,"0")}`);
+  let grid=`<div class="calgrid">${DIA_SEMANA.map(n=>`<div class="calhd">${n}</div>`).join("")}`;
+  cells.forEach(iso=>{
+    if(!iso){ grid+=`<div class="calcell vazio"></div>`; return; }
+    const dd=contasDoDia(iso); const totP=dd.pagar.reduce((s,c)=>s+num(c.valor),0), totR=dd.receber.reduce((s,c)=>s+num(c.valor),0);
+    grid+=`<div class="calcell${iso===hoje?' hoje':''}${iso===diaSelCal?' sel':''}" onclick="diaSelCal='${iso}';render()">
+      <div class="caldia">${Number(iso.slice(8,10))}</div>
+      ${totP>0?`<div class="calbadge pagar" title="a pagar">${reais(totP)}</div>`:''}
+      ${totR>0?`<div class="calbadge receber" title="a receber">+${reais(totR)}</div>`:''}
+    </div>`;
+  });
+  grid+=`</div>`;
+  const diaSel = (diaSelCal && diaSelCal.slice(0,7)===ym) ? diaSelCal : (hoje.slice(0,7)===ym?hoje:null);
+  let detalhe="";
+  if(diaSel){ const dd=contasDoDia(diaSel); const temAlgo=dd.pagar.length||dd.receber.length;
+    detalhe=`<div class="card" style="margin-top:14px"><div class="hd"><h3>${fmtData(diaSel)} — ${DIA_SEMANA[new Date(diaSel+"T00:00:00").getDay()]}</h3></div><div class="bd">
+      ${temAlgo? `
+        ${dd.pagar.length?`<div class="small muted" style="margin-bottom:4px">A pagar</div><table><tbody>${dd.pagar.map(c=>`<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="muted">${catLabel(c.categoria)}</td><td class="r neg"><b>${reais(c.valor)}</b></td><td class="r"><button class="btn sm" onclick="pagarConta('${c._id}')">Pagar</button></td></tr>`).join("")}</tbody></table>`:''}
+        ${dd.receber.length?`<div class="small muted" style="margin:10px 0 4px">A receber</div><table><tbody>${dd.receber.map(c=>`<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="r pos"><b>${reais(c.valor)}</b></td><td class="r"><button class="btn sm" onclick="receberConta('${c._id}')">Receber</button></td></tr>`).join("")}</tbody></table>`:''}
+      ` : `<div class="empty">Nada previsto para este dia.</div>`}
+    </div></div>`;
+  }
+  el.innerHTML=`<div class="card"><div class="hd"><h3>📅 Calendário — ${fmtMesLabel(ym)}</h3><p>Vermelho = a pagar · Verde = a receber. Use o seletor de mês no topo para navegar.</p></div><div class="bd">${grid}</div></div>${detalhe}`;
 }
 
 /* ===================== CATEGORIAS ======================================= */
