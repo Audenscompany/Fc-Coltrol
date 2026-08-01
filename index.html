@@ -633,7 +633,23 @@ function addSaida(){
   DB.push("caixa/saidas",{data,valor,categoria,grupo:grupoDe(categoria),fornecedor:val("s_forn")||null,descricao:val("s_desc")||null,status:"confirmado",origem:"manual",loja:val("s_loja")||lojaPadrao(),criadoEm:Date.now()});
   toast("Saída lançada.");
 }
-function confirmarPendente(id){ DB.update("caixa/saidas/"+id,{status:"confirmado"}); toast("Comprovante confirmado e lançado."); }
+function confirmarPendente(id){
+  const s=STATE.saidas[id]; if(!s) return;
+  const sel=val("pend_loja_"+id)|| (lojaFiltro!=="todos"?lojaFiltro:LOJAS[0].id);
+  if(sel==="__ambas" && LOJAS.length>=2){
+    const total=num(s.valor); let pb=num(val("pend_pct_"+id)); if(!(pb>0&&pb<100)) pb=50;
+    const partB=Math.round(total*pb/100*100)/100, partP=Math.round((total-partB)*100)/100;
+    const rateioId="rat"+Date.now();
+    const base={natureza:"SAIDA",categoria:s.categoria,grupo:s.grupo,fornecedor:s.fornecedor||null,data:s.data,status:"confirmado",origem:s.origem||"whatsapp",criadoEm:Date.now()};
+    DB.push("caixa/saidas",Object.assign({},base,{descricao:(s.descricao||"Comprovante")+" (rateio "+pb+"%)",valor:partB,loja:LOJAS[0].id,rateioId}));
+    DB.push("caixa/saidas",Object.assign({},base,{descricao:(s.descricao||"Comprovante")+" (rateio "+(100-pb)+"%)",valor:partP,loja:LOJAS[1].id,rateioId}));
+    DB.update("caixa/saidas/"+id,{status:"descartado"});
+    toast("Comprovante rateado entre as lojas.");
+    return;
+  }
+  DB.update("caixa/saidas/"+id,{status:"confirmado",loja:sel});
+  toast("Comprovante confirmado e lançado.");
+}
 function descartarPendente(id){ DB.update("caixa/saidas/"+id,{status:"descartado"}); toast("Comprovante descartado."); }
 function confirmarEntradaPend(id){ DB.update("caixa/entradas/"+id,{status:"confirmado"}); toast("Recebimento confirmado e lançado."); }
 function descartarEntradaPend(id){ if(confirm("Descartar este recebimento?")){ DB.remove("caixa/entradas/"+id); toast("Recebimento descartado."); } }
@@ -862,7 +878,9 @@ function renderSaidas(el){
         <span class="muted">· ${fmtData(l.data)}</span></div>
         <div class="small muted">${l.fornecedor?esc(l.fornecedor)+" — ":""}${esc(l.descricao||"Sem descrição")}</div>
         ${(l.precisaRevisao||l.pergunta)?`<div class="small" style="color:#9a7400">⚠️ ${esc(l.pergunta||"Confira os dados antes de confirmar.")}</div>`:""}
-      </div><div style="display:flex;gap:8px">
+      </div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="pend_loja_${l._id}" onchange="var p=document.getElementById('pend_pct_${l._id}');if(p)p.style.display=this.value==='__ambas'?'inline-block':'none'">${LOJAS.map(x=>`<option value="${x.id}"${lojaFiltro!=='todos'&&x.id===lojaFiltro?' selected':''}>${esc(lojaNome(x.id))}</option>`).join("")}<option value="__ambas">Ambas (rateio)</option></select>
+        <input id="pend_pct_${l._id}" style="display:none;width:64px" inputmode="decimal" value="50" title="% do ${esc(lojaNome(LOJAS[0].id))} (o resto vai para ${esc(lojaNome(LOJAS[1]?LOJAS[1].id:''))})">
         <button class="btn sm" onclick="confirmarPendente('${l._id}')">Confirmar</button>
         <button class="btn sm red" onclick="descartarPendente('${l._id}')">Descartar</button>
       </div></div>`).join("")
