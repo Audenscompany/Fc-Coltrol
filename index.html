@@ -2251,12 +2251,21 @@ function colabCadastro(c){
   </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Colaboradores (${lista.length})</h3></div><div class="bd">
     ${lista.length?`<table><thead><tr><th>Nome</th><th>Tipo</th><th class="r">Diária</th><th>CLT</th><th></th></tr></thead><tbody>${
-      lista.map(c2=>`<tr><td>${esc(c2.nome)}</td><td class="muted">${c2.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${c2.tipo==="motoboy"?"—":reais(c2.diaria)}</td><td>${c2.clt?'<span class="badge b-gray">CLT</span>':'—'}</td><td class="r"><button class="btn ghost sm" onclick="removerColaborador('${c2._id}')">excluir</button></td></tr>`).join("")
-    }</tbody></table>`:`<div class="empty">Nenhum colaborador cadastrado.</div>`}
+      lista.map(c2=>`<tr>
+        <td>${esc(c2.nome)}</td>
+        <td><select onchange="salvarTipoColab('${c2._id}',this.value)"><option value="salao"${c2.tipo!=="motoboy"?" selected":""}>Salão/Cozinha</option><option value="motoboy"${c2.tipo==="motoboy"?" selected":""}>Motoboy</option></select></td>
+        <td class="r">${c2.tipo==="motoboy"?'<span class="muted">—</span>':`<input class="precoEdit" style="width:96px" inputmode="decimal" value="${c2.diaria!=null?String(c2.diaria).replace(".",","):""}" placeholder="0,00" onblur="salvarDiaria('${c2._id}',this.value)"${c2.clt?" disabled title='CLT não recebe diária'":""}>`}</td>
+        <td>${c2.tipo==="motoboy"?'<span class="muted">—</span>':`<input type="checkbox" style="width:18px;height:18px" ${c2.clt?"checked":""} onchange="salvarCLT('${c2._id}',this.checked)" title="Carteira assinada">`}</td>
+        <td class="r"><button class="btn ghost sm" onclick="removerColaborador('${c2._id}')">excluir</button></td>
+      </tr>`).join("")
+    }</tbody></table><div class="small muted" style="margin-top:8px">Edite a diária direto na tabela (sai do campo para salvar). Marque CLT para quem é carteira assinada (não recebe diária, mas entra na taxa). Motoboy recebe pelo valor do dia.</div>`:`<div class="empty">Nenhum colaborador cadastrado.</div>`}
   </div></div>`;
 }
 function addColaborador(){ const nome=val("cl_nome"); if(!nome) return toast("Informe o nome."); const cb=document.getElementById("cl_clt"); DB.push("colaboradores",{nome,tipo:val("cl_tipo")||"salao",diaria:num(val("cl_diaria")),clt:!!(cb&&cb.checked),ativo:true,criadoEm:Date.now()}); toast("Colaborador adicionado."); }
 function removerColaborador(id){ if(confirm("Excluir colaborador?")){ DB.remove("colaboradores/"+id); } }
+function salvarDiaria(id,v){ DB.update("colaboradores/"+id,{diaria:num(v)}); toast("Diária atualizada."); }
+function salvarCLT(id,checked){ DB.update("colaboradores/"+id,{clt:!!checked}); toast(checked?"Marcado como CLT (sem diária).":"CLT removido."); }
+function salvarTipoColab(id,v){ DB.update("colaboradores/"+id,{tipo:v==="motoboy"?"motoboy":"salao"}); toast("Tipo atualizado."); }
 let colabDiaEdit=null;
 function motoResumo(d){ return (d.motoboys||[]).map(m=>esc(m.nome)+" "+reais(m.valor)).join(", ")||"—"; }
 function formColabDia(d){
