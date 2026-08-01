@@ -319,7 +319,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -551,6 +551,7 @@ const PAGINAS = [
   {id:"receber",icon:"💰",label:"Contas a receber",grupo:"FINANCEIRO",render:renderReceber},
   {id:"fluxo",icon:"📈",label:"Fluxo de caixa",grupo:"FINANCEIRO",render:renderFluxo},
   {id:"dre",icon:"📑",label:"DRE (resultado)",grupo:"FINANCEIRO",render:renderDRE},
+  {id:"dividas",icon:"🏛️",label:"Dívidas (CNPJ)",grupo:"FINANCEIRO",render:renderDividas},
   {id:"custos",icon:"📒",label:"Custos fixos/variáveis",grupo:"CUSTOS E OPERAÇÃO",render:renderCustos},
   {id:"precificacao",icon:"🏷️",label:"Precificação",grupo:"CUSTOS E OPERAÇÃO",render:renderPrecificacao},
   {id:"categorias",icon:"🗂️",label:"Categorias",grupo:"CONFIGURAÇÕES",render:renderCategorias},
@@ -583,7 +584,7 @@ function render(){
   if(!sessaoValida()) return;
   const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
-  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos"].includes(paginaAtual);
+  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos","dividas"].includes(paginaAtual);
   const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
       <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
       ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}
@@ -1821,6 +1822,87 @@ function renderDRE(el){
   </div></div>`;
 }
 
+/* ===================== DÍVIDAS DOS CNPJs =================================== */
+const CNPJ_LOJA = { burguer:"32.805.379/0001-01", pizza:"56.416.229/0001-66" };
+const STATUS_DIVIDA = ["A negociar","Em negociação","Parcelada","Quitada","Pendente"];
+function optStatusDivida(sel){ return STATUS_DIVIDA.map(s=>`<option${s===sel?" selected":""}>${s}</option>`).join(""); }
+// Consolidado por categoria (aba "Dívidas PJ (CNPJs)" da planilha).
+const DIVIDAS_SEED = [
+  {loja:"burguer",categoria:"Dívida ativa da União (PGFN)",detalhe:"3 inscrições de Simples Nacional (2024–2025): 60.4.24.289961-81, 60.4.25.021614-16, 60.4.25.215043-15",valor:78276.46,onde:"Transação PGFN — Regularize",prazo:"ADESÃO ATÉ 30/09/2026 — desconto até 70%, entrada 6% em 12x, até 133 parcelas",status:"A negociar"},
+  {loja:"burguer",categoria:"Simples Nacional na Receita (PGDAS-D)",detalhe:"18 competências (04/2023 a 04/2025), ainda não inscritas",valor:195641.18,onde:"Parcelamento do Simples no e-CAC (até 60x) ou aguardar inscrição p/ transação (arriscado)",prazo:"Parcelar já evita nova inscrição/protesto; inclui multa+juros",status:"A negociar"},
+  {loja:"burguer",categoria:"INSS/folha na Receita (DCTFWeb)",detalhe:"48 débitos (CP segurados, patronal e terceiros, 2024–2026)",valor:28543.8,onde:"Parcelamento previdenciário no e-CAC",prazo:"Parte de contribuição de segurados tem regras mais duras",status:"A negociar"},
+  {loja:"burguer",categoria:"Obrigação acessória",detalhe:"DCTFWeb de ABR/2026 não entregue",valor:0,onde:"Contador transmitir a declaração",prazo:"Multa por atraso na entrega; impede certidão",status:"Pendente"},
+  {loja:"pizza",categoria:"Dívida ativa da União (PGFN)",detalhe:"2 inscrições (25/05/2026): Simples 60.4.26.225679-83 + Contr. Segurados 60.4.26.225742-54",valor:30988.2,onde:"Transação PGFN — Regularize",prazo:"ADESÃO ATÉ 30/09/2026 — desconto até 70% (parte previdenciária com limite de parcelas menor)",status:"A negociar"},
+  {loja:"pizza",categoria:"INSS/folha na Receita (DCTFWeb)",detalhe:"28 débitos (competências 01–06/2026)",valor:7217.18,onde:"Parcelamento previdenciário no e-CAC ou pagamento à vista (valores recentes, juros baixos)",prazo:"",status:"A negociar"},
+  {loja:"pizza",categoria:"Obrigação acessória",detalhe:"DCTFWeb de ABR/2026 não entregue",valor:0,onde:"Contador transmitir a declaração",prazo:"Multa por atraso; impede certidão",status:"Pendente"},
+];
+// Detalhe por competência (aba "Detalhe Receita (SIEF)"): [loja,tributo,periodo,venc,original,saldo,consolidado]
+const DIVIDASDET_SEED = [["burguer","1082-01 - CP-SEGUR.","08/2024","20/09/2024",599.6,537.56,772.84],["burguer","1082-01 - CP-SEGUR.","09/2024","18/10/2024",709.46,647.42,924.77],["burguer","1082-01 - CP-SEGUR.","10/2024","19/11/2024",700.05,638.01,906.29],["burguer","1082-01 - CP-SEGUR.","11/2024","20/12/2024",848.21,848.21,1196.99],["burguer","1082-01 - CP-SEGUR.","12/2024","20/01/2025",598.03,598.03,837.89],["burguer","1082-01 - CP-SEGUR.","01/2025","20/02/2025",686.93,621.93,865.22],["burguer","1082-01 - CP-SEGUR.","02/2025","20/03/2025",938.13,938.13,1296.11],["burguer","1082-01 - CP-SEGUR.","10/2025","19/11/2025",780.47,780.47,1005.78],["burguer","1082-01 - CP-SEGUR.","11/2025","19/12/2025",877.09,877.09,1119.59],["burguer","1082-01 - CP-SEGUR.","12/2025","20/01/2026",858.0,857.97,1085.24],["burguer","1082-01 - CP-SEGUR.","01/2026","20/02/2026",830.35,830.35,1042.0],["burguer","1082-01 - CP-SEGUR.","02/2026","20/03/2026",802.25,802.25,997.03],["burguer","1082-01 - CP-SEGUR.","03/2026","20/04/2026",880.19,880.19,1084.29],["burguer","1082-21 - CP-SEGUR.","2024","20/12/2024",320.1,320.1,451.72],["burguer","1099-01 - CP-SEGUR.","08/2024","20/09/2024",155.32,155.32,223.29],["burguer","1099-01 - CP-SEGUR.","09/2024","18/10/2024",155.32,155.32,221.85],["burguer","1099-01 - CP-SEGUR.","10/2024","19/11/2024",155.32,155.32,220.62],["burguer","1099-01 - CP-SEGUR.","11/2024","20/12/2024",155.32,155.32,219.18],["burguer","1099-01 - CP-SEGUR.","12/2024","20/01/2025",155.32,155.32,217.61],["burguer","1099-01 - CP-SEGUR.","01/2025","20/02/2025",166.98,166.98,232.29],["burguer","1099-01 - CP-SEGUR.","02/2025","20/03/2025",166.98,166.98,230.69],["burguer","1099-01 - CP-SEGUR.","10/2025","19/11/2025",166.98,166.98,215.18],["burguer","1099-01 - CP-SEGUR.","11/2025","19/12/2025",166.98,166.98,213.14],["burguer","1099-01 - CP-SEGUR.","12/2025","20/01/2026",166.98,166.98,211.2],["burguer","1099-01 - CP-SEGUR.","01/2026","20/02/2026",178.31,178.31,223.75],["burguer","1099-01 - CP-SEGUR.","02/2026","20/03/2026",178.31,178.31,221.6],["burguer","1099-01 - CP-SEGUR.","03/2026","20/04/2026",178.31,178.31,219.65],["burguer","1138-01 - CP-PATRONAL","01/2026","20/02/2026",2115.51,2115.51,2654.75],["burguer","1138-01 - CP-PATRONAL","02/2026","20/03/2026",2053.01,2053.01,2551.47],["burguer","1138-01 - CP-PATRONAL","03/2026","20/04/2026",2243.55,2243.55,2763.82],["burguer","1138-04 - CP-PATRONAL","01/2026","20/02/2026",324.2,324.2,406.83],["burguer","1138-04 - CP-PATRONAL","02/2026","20/03/2026",324.2,324.2,402.91],["burguer","1138-04 - CP-PATRONAL","03/2026","20/04/2026",324.2,324.2,399.38],["burguer","1646-01 - CP-PATRONAL","01/2026","20/02/2026",158.66,158.66,199.1],["burguer","1646-01 - CP-PATRONAL","02/2026","20/03/2026",153.97,153.97,191.34],["burguer","1646-01 - CP-PATRONAL","03/2026","20/04/2026",168.26,168.26,207.27],["burguer","1170-01 - CP-TERCEIROS","01/2026","20/02/2026",264.43,264.43,331.82],["burguer","1170-01 - CP-TERCEIROS","02/2026","20/03/2026",256.62,256.62,318.92],["burguer","1170-01 - CP-TERCEIROS","03/2026","20/04/2026",280.44,280.44,345.46],["burguer","1176-01 - CP-TERCEIROS","01/2026","20/02/2026",21.15,21.15,26.54],["burguer","1176-01 - CP-TERCEIROS","02/2026","20/03/2026",20.53,20.53,25.5],["burguer","1176-01 - CP-TERCEIROS","03/2026","20/04/2026",22.43,22.43,27.62],["burguer","1200-01 - CP-TERCEIROS","01/2026","20/02/2026",63.46,63.46,79.63],["burguer","1200-01 - CP-TERCEIROS","02/2026","20/03/2026",61.59,61.59,76.53],["burguer","1200-01 - CP-TERCEIROS","03/2026","20/04/2026",67.3,67.3,82.9],["burguer","1225-01 - CP-TERCEIROS","01/2026","20/02/2026",264.43,264.43,331.82],["burguer","1225-01 - CP-TERCEIROS","02/2026","20/03/2026",256.62,256.62,318.92],["burguer","1225-01 - CP-TERCEIROS","03/2026","20/04/2026",280.44,280.44,345.46],["burguer","SIMPLES NAC.","04/2023","22/05/2023",5689.14,4843.96,7680.58],["burguer","SIMPLES NAC.","05/2023","20/06/2023",4814.02,4814.02,7581.59],["burguer","SIMPLES NAC.","06/2023","20/07/2023",4864.51,4864.51,7609.06],["burguer","SIMPLES NAC.","12/2023","22/01/2024",8234.0,8234.0,12394.64],["burguer","SIMPLES NAC.","01/2024","20/02/2024",8991.49,8991.49,13462.94],["burguer","SIMPLES NAC.","02/2024","20/03/2024",6640.29,6640.29,9887.38],["burguer","SIMPLES NAC.","03/2024","22/04/2024",7663.15,7663.15,11342.22],["burguer","SIMPLES NAC.","04/2024","20/05/2024",6515.25,6515.25,9589.14],["burguer","SIMPLES NAC.","05/2024","20/06/2024",7096.31,7096.31,10388.28],["burguer","SIMPLES NAC.","06/2024","22/07/2024",7466.5,7466.5,10862.26],["burguer","SIMPLES NAC.","07/2024","20/08/2024",6996.25,6996.25,10117.27],["burguer","SIMPLES NAC.","10/2024","21/11/2024",7825.78,7825.78,11116.51],["burguer","SIMPLES NAC.","11/2024","20/12/2024",6850.01,6850.01,9666.73],["burguer","SIMPLES NAC.","12/2024","20/01/2025",8939.53,8939.53,12525.16],["burguer","SIMPLES NAC.","01/2025","20/02/2025",9455.22,9455.22,13154.09],["burguer","SIMPLES NAC.","02/2025","20/03/2025",6926.33,6926.33,9569.41],["burguer","SIMPLES NAC.","03/2025","22/04/2025",10468.75,10468.75,14352.65],["burguer","SIMPLES NAC.","04/2025","28/05/2025",10548.16,10548.16,14341.27],["pizza","1082-01 - CP-SEGUR.","01/2026","20/02/2026",331.98,331.98,416.59],["pizza","1082-01 - CP-SEGUR.","02/2026","20/03/2026",330.54,330.54,410.78],["pizza","1082-01 - CP-SEGUR.","03/2026","20/04/2026",331.86,331.86,408.81],["pizza","1082-01 - CP-SEGUR.","06/2026","20/07/2026",343.84,343.84,354.05],["pizza","1138-01 - CP-PATRONAL","01/2026","20/02/2026",845.83,845.83,1061.42],["pizza","1138-01 - CP-PATRONAL","02/2026","20/03/2026",842.63,842.63,1047.21],["pizza","1138-01 - CP-PATRONAL","03/2026","20/04/2026",845.58,845.58,1041.66],["pizza","1138-01 - CP-PATRONAL","06/2026","20/07/2026",872.19,872.19,898.09],["pizza","1646-01 - CP-PATRONAL","01/2026","20/02/2026",84.58,84.58,106.13],["pizza","1646-01 - CP-PATRONAL","02/2026","20/03/2026",84.26,84.26,104.71],["pizza","1646-01 - CP-PATRONAL","03/2026","20/04/2026",84.55,84.55,104.15],["pizza","1646-01 - CP-PATRONAL","06/2026","20/07/2026",87.21,87.21,89.8],["pizza","1170-01 - CP-TERCEIROS","01/2026","20/02/2026",105.72,105.72,132.66],["pizza","1170-01 - CP-TERCEIROS","02/2026","20/03/2026",105.32,105.32,130.88],["pizza","1170-01 - CP-TERCEIROS","03/2026","20/04/2026",105.69,105.69,130.19],["pizza","1170-01 - CP-TERCEIROS","06/2026","20/07/2026",109.02,109.02,112.25],["pizza","1176-01 - CP-TERCEIROS","01/2026","20/02/2026",8.45,8.45,10.6],["pizza","1176-01 - CP-TERCEIROS","02/2026","20/03/2026",8.42,8.42,10.46],["pizza","1176-01 - CP-TERCEIROS","03/2026","20/04/2026",8.45,8.45,10.4],["pizza","1176-01 - CP-TERCEIROS","06/2026","20/07/2026",8.72,8.72,8.97],["pizza","1200-01 - CP-TERCEIROS","01/2026","20/02/2026",25.37,25.37,31.83],["pizza","1200-01 - CP-TERCEIROS","02/2026","20/03/2026",25.27,25.27,31.4],["pizza","1200-01 - CP-TERCEIROS","03/2026","20/04/2026",25.36,25.36,31.23],["pizza","1200-01 - CP-TERCEIROS","06/2026","20/07/2026",26.16,26.16,26.93],["pizza","1225-01 - CP-TERCEIROS","01/2026","20/02/2026",105.72,105.72,132.66],["pizza","1225-01 - CP-TERCEIROS","02/2026","20/03/2026",105.32,105.32,130.88],["pizza","1225-01 - CP-TERCEIROS","03/2026","20/04/2026",105.69,105.69,130.19],["pizza","1225-01 - CP-TERCEIROS","06/2026","20/07/2026",109.02,109.02,112.25]];
+function importarDividas(){
+  if(Object.keys(STATE.dividas||{}).length && !confirm("Já existem dívidas cadastradas. Reimportar vai SOBRESCREVER os dados da planilha (o status que você alterou volta ao original). Continuar?")) return;
+  DIVIDAS_SEED.forEach((d,i)=>DB.set("dividas/seed_"+i,{loja:d.loja,cnpj:CNPJ_LOJA[d.loja]||"",categoria:d.categoria,detalhe:d.detalhe,valor:d.valor,onde:d.onde,prazo:d.prazo,status:d.status,origem:"planilha",criadoEm:Date.now()}));
+  DIVIDASDET_SEED.forEach((r,i)=>DB.set("dividasDet/seed_"+i,{loja:r[0],tributo:r[1],periodo:r[2],venc:r[3],original:r[4],saldo:r[5],consolidado:r[6]}));
+  toast("Dívidas dos CNPJs importadas.");
+}
+function mudarStatusDivida(id,v){ DB.update("dividas/"+id,{status:v}); toast("Status atualizado."); }
+function removerDivida(id){ if(confirm("Excluir esta dívida?")){ DB.remove("dividas/"+id); } }
+function addDivida(){ const loja=val("dv_loja")||lojaPadrao(); const categoria=val("dv_cat"); if(!categoria) return toast("Informe a categoria."); DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria,detalhe:val("dv_det")||"",valor:num(val("dv_val")),onde:val("dv_onde")||"",prazo:"",status:val("dv_status")||"A negociar",origem:"manual",criadoEm:Date.now()}); toast("Dívida adicionada."); }
+function renderDividas(el){
+  document.getElementById("pgSub").textContent="Dívidas dos CNPJs (Receita Federal / PGFN), separadas por empresa.";
+  const todas=obj2arr(STATE.dividas);
+  const temDados=todas.length>0;
+  const lojas = lojaFiltro!=="todos"?[lojaFiltro]:LOJAS.map(l=>l.id);
+  const totalGeral=todas.filter(daLoja).reduce((s,d)=>s+num(d.valor),0);
+  let html=`<div class="grid g3" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">Exposição total (CNPJs)</div><div class="val neg">${reais(totalGeral)}</div><div class="hint">${lojaFiltro==="todos"?"as duas empresas":esc(lojaNome(lojaFiltro))}</div></div>
+    ${LOJAS.map(l=>{const t=todas.filter(d=>(d.loja||"")===l.id).reduce((s,d)=>s+num(d.valor),0); return `<div class="stat"><div class="lbl">${esc(lojaNome(l.id))}</div><div class="val">${reais(t)}</div><div class="hint">${esc(CNPJ_LOJA[l.id]||"")}</div></div>`;}).join("")}
+  </div>
+  <div class="card" style="margin-bottom:14px"><div class="bd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div class="muted">${temDados?"Dados importados da planilha de dívidas. Você pode reimportar para restaurar o original.":"Importe as dívidas dos CNPJs da sua planilha (consolidado por categoria + detalhe por competência)."}</div>
+    <button class="btn" onclick="importarDividas()">${temDados?"Reimportar da planilha":"Importar dívidas dos CNPJs"}</button>
+  </div></div>`;
+  if(temDados){
+    lojas.forEach(loja=>{
+      const ds=todas.filter(d=>(d.loja||"")===loja).sort((a,b)=>num(b.valor)-num(a.valor));
+      if(!ds.length) return;
+      const det=obj2arr(STATE.dividasDet).filter(r=>(r.loja||"")===loja).sort((a,b)=>(a.tributo||"").localeCompare(b.tributo||"")||(a.periodo||"").localeCompare(b.periodo||""));
+      const tot=ds.reduce((s,d)=>s+num(d.valor),0);
+      const totDet=det.reduce((s,r)=>s+num(r.consolidado),0);
+      html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>${esc(lojaNome(loja))} <span class="pill">${esc(CNPJ_LOJA[loja]||"")}</span></h3><p>Total consolidado: <b class="neg">${reais(tot)}</b></p></div><div class="bd">
+        <table><thead><tr><th>Categoria</th><th>Detalhe</th><th class="r">Valor</th><th>Onde negociar</th><th>Prazo / observação</th><th>Status</th><th></th></tr></thead><tbody>${
+          ds.map(d=>`<tr>
+            <td><b>${esc(d.categoria)}</b></td>
+            <td class="muted" style="max-width:260px">${esc(d.detalhe||"—")}</td>
+            <td class="r"><b class="neg">${reais(d.valor)}</b></td>
+            <td class="muted" style="max-width:190px">${esc(d.onde||"—")}</td>
+            <td class="muted" style="max-width:210px">${esc(d.prazo||"—")}</td>
+            <td><select onchange="mudarStatusDivida('${d._id}',this.value)">${optStatusDivida(d.status)}</select></td>
+            <td class="r"><button class="btn ghost sm" onclick="removerDivida('${d._id}')">×</button></td>
+          </tr>`).join("")
+        }</tbody></table>
+        ${det.length?`<details style="margin-top:12px"><summary style="cursor:pointer;font-weight:700;color:var(--purple-d)">Ver detalhe por competência (SIEF) — ${det.length} lançamentos · consolidado ${reais(totDet)}</summary>
+          <table style="margin-top:10px"><thead><tr><th>Tributo</th><th>Período</th><th>Vencimento</th><th class="r">Valor original</th><th class="r">Saldo devedor</th><th class="r">Consolidado</th></tr></thead><tbody>${
+            det.map(r=>`<tr><td>${esc(r.tributo)}</td><td>${esc(r.periodo)}</td><td>${esc(r.venc)}</td><td class="r">${reais(r.original)}</td><td class="r">${reais(r.saldo)}</td><td class="r"><b>${reais(r.consolidado)}</b></td></tr>`).join("")
+          }</tbody></table></details>`:""}
+      </div></div>`;
+    });
+    html+=`<div class="card"><div class="hd"><h3>Adicionar dívida (manual)</h3></div><div class="bd">
+      <div class="row">
+        <div><label class="f">Empresa</label><select id="dv_loja">${LOJAS.map(l=>`<option value="${l.id}">${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+        <div><label class="f">Categoria</label><input id="dv_cat" placeholder="Ex.: Parcelamento Simples"></div>
+        <div><label class="f">Valor (R$)</label><input id="dv_val" inputmode="decimal" placeholder="0,00"></div>
+        <div><label class="f">Status</label><select id="dv_status">${optStatusDivida("A negociar")}</select></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:2"><label class="f">Detalhe</label><input id="dv_det" placeholder="descrição"></div>
+        <div style="flex:2"><label class="f">Onde negociar</label><input id="dv_onde" placeholder="ex.: e-CAC / PGFN"></div>
+        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addDivida()">Adicionar</button></div>
+      </div>
+    </div></div>`;
+  }
+  el.innerHTML=html;
+}
+
 /* ===================== IMPORTAR EXCEL (planilha Delivery Lucrativo) ======== */
 function precAbaImportar(c){
   const loja=lojaPrecAtual();
@@ -2134,6 +2216,8 @@ function boot(){
   bind("vendas","vendas");
   bind("canais","canais");
   bind("metas","metas");
+  bind("dividas","dividas");
+  bind("dividasDet","dividasDet");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
