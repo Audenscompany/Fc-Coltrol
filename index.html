@@ -2185,7 +2185,7 @@ function tokensNome(s){ return norm(s).replace(/[^A-Z0-9 ]/g," ").split(" ").fil
 function chaveColab(nome, lista){ const pn=tokensNome(nome)[0]||""; const mesmo=lista.filter(c=>(tokensNome(c.nome)[0]||"")===pn); if(mesmo.length>1) return pn+"|"+(tokensNome(nome)[1]||""); return pn; }
 // Calcula o que cada colaborador recebe no ciclo [ini,fim].
 function pagamentoCiclo(ini, fim){
-  const dias=obj2arr(STATE.colabDias).filter(d=>(d.data||"")>=ini && (d.data||"")<=fim);
+  const dias=obj2arr(STATE.colabDias).filter(d=>(d.data||"")>=ini && (d.data||"")<=fim && d.status!=="pendente");
   const lista=obj2arr(STATE.colaboradores);
   const cb={}; lista.forEach(c=>{ cb[chaveColab(c.nome,lista)]=c; });
   const pg={};
@@ -2257,10 +2257,40 @@ function colabCadastro(c){
 }
 function addColaborador(){ const nome=val("cl_nome"); if(!nome) return toast("Informe o nome."); const cb=document.getElementById("cl_clt"); DB.push("colaboradores",{nome,tipo:val("cl_tipo")||"salao",diaria:num(val("cl_diaria")),clt:!!(cb&&cb.checked),ativo:true,criadoEm:Date.now()}); toast("Colaborador adicionado."); }
 function removerColaborador(id){ if(confirm("Excluir colaborador?")){ DB.remove("colaboradores/"+id); } }
+let colabDiaEdit=null;
+function motoResumo(d){ return (d.motoboys||[]).map(m=>esc(m.nome)+" "+reais(m.valor)).join(", ")||"—"; }
+function formColabDia(d){
+  const motoTxt=(d.motoboys||[]).map(m=>`${m.nome}: ${m.valor}`).join("\n");
+  return `<div style="border:1px solid #e3d9f7;border-radius:10px;padding:12px;margin-bottom:8px;background:#f6f2fe">
+    <div class="row">
+      <div><label class="f">Data</label><input type="date" id="cde_data_${d._id}" value="${(d.data||"").slice(0,10)}"></div>
+      <div><label class="f">Taxa de serviço total (R$)</label><input id="cde_taxa_${d._id}" inputmode="decimal" value="${d.taxaServico!=null?String(d.taxaServico).replace(".",","):""}"></div>
+    </div>
+    <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Salão/Cozinha (vírgula)</label><input id="cde_salao_${d._id}" value="${esc((d.salao||[]).join(", "))}"></div></div>
+    <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Motoboys (Nome: valor por linha)</label><textarea id="cde_moto_${d._id}" rows="3">${esc(motoTxt)}</textarea></div></div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn sm" onclick="salvarColabDia('${d._id}',${d.status==='pendente'?'true':'false'})">${d.status==='pendente'?'Salvar e aprovar':'Salvar'}</button>
+      <button class="btn ghost sm" onclick="colabDiaEdit=null;render()">Cancelar</button>
+    </div>
+  </div>`;
+}
 function colabDiasView(c){
-  const dias=obj2arr(STATE.colabDias).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  const todos=obj2arr(STATE.colabDias).sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  const pend=todos.filter(d=>d.status==="pendente");
+  const aprov=todos.filter(d=>d.status!=="pendente");
   c.innerHTML=`
-  <div class="card"><div class="hd"><h3>Lançar dia manual</h3><p>Normalmente entra sozinho pela mensagem do grupo de caixa. Use aqui para corrigir ou completar.</p></div><div class="bd">
+  ${pend.length?`<div class="card" style="border-color:#f0d488;margin-bottom:14px"><div class="hd"><h3>📲 Dias do caixa a aprovar (${pend.length})</h3><p>Lidos da mensagem do grupo. Confira, edite se precisar e aprove — só entram no pagamento após aprovação.</p></div><div class="bd">
+    ${pend.map(d=> d._id===colabDiaEdit ? formColabDia(d) : `<div class="pend"><div>
+        <div><b>${fmtData(d.data)}</b> <span class="muted">· taxa ${reais(d.taxaServico)}</span></div>
+        <div class="small muted">Salão/Cozinha: ${esc((d.salao||[]).join(", "))||"—"}</div>
+        <div class="small muted">Motoboys: ${motoResumo(d)}</div>
+      </div><div style="display:flex;gap:8px;align-items:center">
+        <button class="btn sm" onclick="aprovarColabDia('${d._id}')">Aprovar</button>
+        <button class="btn ghost sm" onclick="colabDiaEdit='${d._id}';render()">Editar</button>
+        <button class="btn ghost sm red" onclick="removerColabDia('${d._id}')">Excluir</button>
+      </div></div>`).join("")}
+  </div></div>`:""}
+  <div class="card"><div class="hd"><h3>Lançar dia manual</h3><p>Normalmente entra sozinho pela mensagem do grupo de caixa. Use aqui para corrigir ou completar (já entra aprovado).</p></div><div class="bd">
     <div class="row">
       <div><label class="f">Data</label><input type="date" id="cd_data" value="${hojeISO()}"></div>
       <div><label class="f">Taxa de serviço total (R$)</label><input id="cd_taxa" inputmode="decimal" placeholder="0,00"></div>
@@ -2269,20 +2299,23 @@ function colabDiasView(c){
     <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Motoboys (um por linha: Nome: valor)</label><textarea id="cd_moto" rows="3" placeholder="Matheus: 185&#10;Maicon: 170"></textarea></div></div>
     <button class="btn" style="margin-top:10px" onclick="addColabDia()">Salvar dia</button>
   </div></div>
-  <div class="card" style="margin-top:14px"><div class="hd"><h3>Dias lançados (${dias.length})</h3></div><div class="bd">
-    ${dias.length?`<table><thead><tr><th>Data</th><th class="r">Taxa serv.</th><th>Salão/Cozinha</th><th class="r">Motoboys</th><th></th></tr></thead><tbody>${
-      dias.slice(0,80).map(d=>`<tr><td>${fmtData(d.data)}</td><td class="r">${reais(d.taxaServico)}</td><td class="muted small">${esc((d.salao||[]).join(", "))||"—"}</td><td class="r">${(d.motoboys||[]).length}</td><td class="r"><button class="btn ghost sm" onclick="removerColabDia('${d._id}')">excluir</button></td></tr>`).join("")
-    }</tbody></table>`:`<div class="empty">Nenhum dia lançado.</div>`}
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Dias aprovados (${aprov.length})</h3></div><div class="bd">
+    ${aprov.length? aprov.slice(0,80).map(d=> d._id===colabDiaEdit ? formColabDia(d) : `<div class="rz"><span><b>${fmtData(d.data)}</b> <span class="muted">· taxa ${reais(d.taxaServico)} · ${(d.salao||[]).length} salão · ${(d.motoboys||[]).length} motoboy</span></span><span style="white-space:nowrap"><button class="btn ghost sm" onclick="colabDiaEdit='${d._id}';render()">editar</button> <button class="btn ghost sm" onclick="removerColabDia('${d._id}')">excluir</button></span></div>`).join("") : `<div class="empty">Nenhum dia aprovado ainda.</div>`}
   </div></div>`;
 }
+function lerMotoTextarea(id){ const el=document.getElementById(id); const raw=((el&&el.value)||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean); return raw.map(l=>{ const i=l.lastIndexOf(":"); return {nome:(i>=0?l.slice(0,i):l).trim(), valor:num(i>=0?l.slice(i+1):0)}; }).filter(m=>m.nome); }
 function addColabDia(){
   const data=val("cd_data")||hojeISO();
   const salao=(val("cd_salao")||"").split(",").map(s=>s.trim()).filter(Boolean);
-  const taxa=num(val("cd_taxa"));
-  const el=document.getElementById("cd_moto"); const motoRaw=((el&&el.value)||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean);
-  const motoboys=motoRaw.map(l=>{ const i=l.lastIndexOf(":"); const nome=(i>=0?l.slice(0,i):l).trim(); const valor=num(i>=0?l.slice(i+1):0); return {nome,valor}; }).filter(m=>m.nome);
-  DB.push("colabDias",{data,inicio:0,final:0,salao,taxaServico:taxa,motoboys,origem:"manual",criadoEm:Date.now()});
+  DB.push("colabDias",{data,inicio:0,final:0,salao,taxaServico:num(val("cd_taxa")),motoboys:lerMotoTextarea("cd_moto"),status:"aprovado",origem:"manual",criadoEm:Date.now()});
   toast("Dia lançado.");
+}
+function aprovarColabDia(id){ DB.update("colabDias/"+id,{status:"aprovado"}); toast("Dia aprovado — entrou no pagamento."); }
+function salvarColabDia(id,aprovar){
+  const salao=(val("cde_salao_"+id)||"").split(",").map(s=>s.trim()).filter(Boolean);
+  const patch={ data:val("cde_data_"+id)||hojeISO(), taxaServico:num(val("cde_taxa_"+id)), salao, motoboys:lerMotoTextarea("cde_moto_"+id) };
+  if(aprovar) patch.status="aprovado";
+  DB.update("colabDias/"+id,patch); colabDiaEdit=null; toast(aprovar?"Dia aprovado.":"Dia atualizado.");
 }
 function removerColabDia(id){ if(confirm("Excluir este dia?")){ DB.remove("colabDias/"+id); } }
 
