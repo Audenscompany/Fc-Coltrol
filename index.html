@@ -2344,61 +2344,71 @@ function salvarColabDia(id,aprovar){
 }
 function removerColabDia(id){ if(confirm("Excluir este dia?")){ DB.remove("colabDias/"+id); } }
 
-/* ===================== ESTOQUE (contagem diária por loja) =============== */
+/* ===================== ESTOQUE (contagem diária por loja) ===============
+   A lista JÁ vem dos insumos da loja (Precificação). O gestor pode adicionar itens
+   extras e remover os que não quer contar (insumo removido fica "oculto"). */
 let estoqueData=null;
+function listaEstoque(loja){
+  const ocultos=(STATE.config&&STATE.config.estoqueOcultos&&STATE.config.estoqueOcultos[loja])||{};
+  const base=insumosDaLoja(loja).filter(i=>!ocultos[i._id]).map(i=>({id:i._id,nome:i.nome,unidade:i.unidade||"un",origem:"insumo"}));
+  const custom=obj2arr(STATE.estoqueItens).filter(i=>(i.loja||"")===loja && i.ativo!==false).map(i=>({id:i._id,nome:i.nome,unidade:i.unidade||"un",origem:"custom"}));
+  return base.concat(custom).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+}
 function renderEstoque(el){
   const loja = lojaTravada() || (lojaFiltro!=="todos"?lojaFiltro:null);
   if(!loja){ document.getElementById("pgSub").textContent="Contagem diária de estoque — por loja."; el.innerHTML=bannerEscolherLoja("O estoque é por loja. Escolha a loja no topo:"); return; }
   document.getElementById("pgSub").textContent="Contagem diária de estoque — "+lojaNome(loja);
   if(!estoqueData) estoqueData=hojeISO();
-  const itens=obj2arr(STATE.estoqueItens).filter(i=>(i.loja||"")===loja && i.ativo!==false).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  const itens=listaEstoque(loja);
   const cont=(STATE.estoqueCont&&STATE.estoqueCont[loja+"__"+estoqueData])||{};
   const q=cont.quantidades||{};
   const gestor=ehGestor();
+  const ocultos=(STATE.config&&STATE.config.estoqueOcultos&&STATE.config.estoqueOcultos[loja])||{};
+  const nOcultos=Object.keys(ocultos).length;
   let html=`<div class="card" style="margin-bottom:14px"><div class="bd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
     <div class="tbfld"><label class="f">Data da contagem</label><input type="date" id="est_data" value="${estoqueData}" onchange="estoqueData=this.value;render()"></div>
     <div class="small muted">${cont.criadoEm?("Salva por "+esc(cont.por||"—")):"Sem contagem salva neste dia."}</div>
   </div></div>`;
   if(!itens.length){
-    html+=`<div class="card"><div class="bd"><div class="empty">Nenhum item na lista de estoque de ${esc(lojaNome(loja))}.${gestor?" Gere a partir dos insumos no quadro abaixo.":" Peça ao gestor para montar a lista."}</div></div></div>`;
+    html+=`<div class="card"><div class="bd"><div class="empty">Nenhum item de estoque em ${esc(lojaNome(loja))}. Cadastre os insumos em <a class="linkmais" onclick="irPara('precificacao')">Precificação</a> — eles aparecem aqui automaticamente.</div></div></div>`;
   } else {
     html+=`<div class="card"><div class="hd"><h3>Contagem — ${fmtData(estoqueData)}</h3><p>Preencha a quantidade em estoque de cada item e salve.</p></div><div class="bd">
       <table><thead><tr><th>Item</th><th>Unid.</th><th class="r" style="width:140px">Quantidade</th></tr></thead><tbody>${
-        itens.map(i=>`<tr><td>${esc(i.nome)}</td><td class="muted">${esc(i.unidade||"un")}</td><td class="r"><input class="precoEdit" style="width:110px;text-align:right" inputmode="decimal" id="eq_${i._id}" value="${q[i._id]!=null?String(q[i._id]).replace(".",","):""}" placeholder="0"></td></tr>`).join("")
+        itens.map(i=>`<tr><td>${esc(i.nome)}</td><td class="muted">${esc(i.unidade||"un")}</td><td class="r"><input class="precoEdit" style="width:110px;text-align:right" inputmode="decimal" id="eq_${i.id}" value="${q[i.id]!=null?String(q[i.id]).replace(".",","):""}" placeholder="0"></td></tr>`).join("")
       }</tbody></table>
       <button class="btn" style="margin-top:12px" onclick="salvarContagem('${loja}')">Salvar contagem</button>
     </div></div>`;
   }
   if(gestor){
-    html+=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Editar lista de itens — ${esc(lojaNome(loja))}</h3><p>Adicione, renomeie ou remova itens. Dá para gerar a lista a partir dos insumos da Precificação.</p></div><div class="bd">
+    html+=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Ajustar a lista — ${esc(lojaNome(loja))}</h3><p>Os insumos já aparecem sozinhos. Aqui você adiciona itens extras ou remove os que não quer contar.${nOcultos?` (${nOcultos} oculto[s])`:""}</p></div><div class="bd">
       <div class="row">
-        <div style="flex:2"><label class="f">Novo item</label><input id="ei_nome" placeholder="Ex.: Caixa de tomate"></div>
+        <div style="flex:2"><label class="f">Adicionar item extra</label><input id="ei_nome" placeholder="Ex.: Caixa de tomate"></div>
         <div><label class="f">Unidade</label><input id="ei_un" placeholder="un, kg, cx"></div>
         <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="addEstoqueItem('${loja}')">+ item</button></div>
-        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="gerarEstoqueDosInsumos('${loja}')">Gerar dos insumos</button></div>
+        ${nOcultos?`<div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="restaurarEstoque('${loja}')">Restaurar ocultos</button></div>`:""}
       </div>
-      ${itens.length?`<div class="hr"></div><table><thead><tr><th>Item</th><th>Unid.</th><th></th></tr></thead><tbody>${
-        itens.map(i=>`<tr><td><input class="precoEdit" style="width:240px" value="${esc(i.nome)}" onblur="renomearEstoqueItem('${i._id}',this.value)"></td><td><input class="precoEdit" style="width:70px" value="${esc(i.unidade||"")}" onblur="unidadeEstoqueItem('${i._id}',this.value)"></td><td class="r"><button class="btn ghost sm" onclick="removerEstoqueItem('${i._id}')">excluir</button></td></tr>`).join("")
-      }</tbody></table>`:""}
+      ${itens.length?`<div class="hr"></div><table><thead><tr><th>Item</th><th>Unid.</th><th>Origem</th><th></th></tr></thead><tbody>${
+        itens.map(i=> i.origem==="custom"
+          ? `<tr><td><input class="precoEdit" style="width:220px" value="${esc(i.nome)}" onblur="renomearEstoqueItem('${i.id}',this.value)"></td><td><input class="precoEdit" style="width:70px" value="${esc(i.unidade||"")}" onblur="unidadeEstoqueItem('${i.id}',this.value)"></td><td class="muted small">extra</td><td class="r"><button class="btn ghost sm" onclick="removerEstoqueItem('${i.id}')">excluir</button></td></tr>`
+          : `<tr><td>${esc(i.nome)}</td><td class="muted">${esc(i.unidade||"un")}</td><td class="muted small">insumo</td><td class="r"><button class="btn ghost sm" onclick="ocultarEstoqueItem('${loja}','${i.id}')">remover</button></td></tr>`
+        ).join("")
+      }</tbody></table><div class="small muted" style="margin-top:6px">Itens "insumo" são renomeados na Precificação. Aqui você pode removê-los da contagem (ficam ocultos) e restaurar quando quiser.</div>`:""}
     </div></div>`;
   }
   el.innerHTML=html;
 }
 function salvarContagem(loja){
-  const itens=obj2arr(STATE.estoqueItens).filter(i=>(i.loja||"")===loja && i.ativo!==false);
-  const quantidades={}; itens.forEach(i=>{ const v=val("eq_"+i._id); if(v!=="") quantidades[i._id]=num(v); });
+  const itens=listaEstoque(loja);
+  const quantidades={}; itens.forEach(i=>{ const v=val("eq_"+i.id); if(v!=="") quantidades[i.id]=num(v); });
   DB.set("estoqueCont/"+loja+"__"+estoqueData,{loja,data:estoqueData,quantidades,por:(SESSAO&&(SESSAO.nome||SESSAO.email))||"",criadoEm:Date.now()});
   toast("Contagem salva.");
 }
 function addEstoqueItem(loja){ const nome=val("ei_nome"); if(!nome) return toast("Informe o nome do item."); DB.push("estoqueItens",{loja,nome,unidade:val("ei_un")||"un",ativo:true,criadoEm:Date.now()}); toast("Item adicionado."); }
 function renomearEstoqueItem(id,v){ if(!String(v).trim()) return; DB.update("estoqueItens/"+id,{nome:String(v).trim()}); }
 function unidadeEstoqueItem(id,v){ DB.update("estoqueItens/"+id,{unidade:String(v).trim()||"un"}); }
-function removerEstoqueItem(id){ if(confirm("Remover este item da lista de estoque?")){ DB.remove("estoqueItens/"+id); } }
-function gerarEstoqueDosInsumos(loja){
-  const existentes=new Set(obj2arr(STATE.estoqueItens).filter(i=>(i.loja||"")===loja).map(i=>norm(i.nome)));
-  let n=0; insumosDaLoja(loja).forEach(i=>{ if(!existentes.has(norm(i.nome))){ DB.push("estoqueItens",{loja,nome:i.nome,unidade:i.unidade||"un",ativo:true,criadoEm:Date.now()}); existentes.add(norm(i.nome)); n++; } });
-  toast(n+" item(ns) importados dos insumos.");
-}
+function removerEstoqueItem(id){ if(confirm("Remover este item extra?")){ DB.remove("estoqueItens/"+id); } }
+function ocultarEstoqueItem(loja,id){ const cur=Object.assign({},(STATE.config&&STATE.config.estoqueOcultos)||{}); cur[loja]=Object.assign({},cur[loja]||{}); cur[loja][id]=true; DB.update("config",{estoqueOcultos:cur}); toast("Item removido da contagem."); }
+function restaurarEstoque(loja){ const cur=Object.assign({},(STATE.config&&STATE.config.estoqueOcultos)||{}); cur[loja]={}; DB.update("config",{estoqueOcultos:cur}); toast("Itens restaurados."); }
 
 /* ===================== IMPORTAR EXCEL (planilha Delivery Lucrativo) ======== */
 function precAbaImportar(c){
