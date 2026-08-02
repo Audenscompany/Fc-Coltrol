@@ -2352,23 +2352,32 @@ async function _rpost(path,body){ const r=await fetch(ROUTE_API+path,{method:"PO
 async function _rdel(path){ const r=await fetch(ROUTE_API+path,{method:"DELETE"}); if(!r.ok) throw new Error("HTTP "+r.status); return r.status===204?null:r.json(); }
 // Uma vez: apaga os produtos do estoque no Audens Route e recadastra com os insumos do FC Control.
 async function sincronizarEstoqueRoute(){
-  if(!confirm("Isto APAGA todos os produtos de estoque do Audens Route (Burguer e Pizza) e recadastra com os insumos do FC Control (mesmos nomes). Continuar?")) return;
-  const log=m=>{ const el=document.getElementById("syncLog"); if(el){ el.style.display="block"; el.innerHTML+=m+"<br>"; } };
+  if(!confirm("Isto APAGA todos os produtos de estoque do Audens Route (Burguer e Pizza) e recadastra com os insumos do FC Control (mesmos nomes, sem repetir). Continuar?")) return;
+  const log=m=>{ const el=document.getElementById("syncLog"); if(el){ el.style.display="block"; el.innerHTML+=m+"<br>"; el.scrollTop=el.scrollHeight; } };
   try{
     const stores=(await _rget("/api/stores"))||[];
     const map={}; stores.forEach(s=>{ const n=(s.name||"").toLowerCase(); if(n.includes("burg"))map.burguer=s.id; else if(n.includes("pizz"))map.pizza=s.id; });
     for(const l of LOJAS){
-      const sid=map[l.id]; if(!sid){ log("⚠️ "+lojaNome(l.id)+" não encontrada no Route."); continue; }
-      log("<b>"+esc(lojaNome(l.id))+"</b>: apagando produtos atuais…");
-      const atuais=(await _rget("/api/stock/products?store="+encodeURIComponent(sid)))||[];
-      let del=0; for(const p of atuais){ try{ await _rdel("/api/stock/products/"+p.id); del++; }catch(_){} }
-      log("apagados "+del+". Cadastrando insumos…");
-      const ins=insumosDaLoja(l.id); let n=0;
-      for(const i of ins){ try{ await _rpost("/api/stock/products",{storeId:sid,name:i.nome,unit:i.unidade||"un",category:"Geral",active:true}); n++; }catch(_){} }
-      log("✓ "+n+" produtos criados em "+esc(lojaNome(l.id))+".");
+      const sid=map[l.id]; if(!sid){ log("⚠️ "+esc(lojaNome(l.id))+" não encontrada no Route."); continue; }
+      // Apaga TUDO com várias passadas + verificação (evita duplicado por delete que falha).
+      let passada=0, restam;
+      do{
+        const atuais=(await _rget("/api/stock/products?store="+encodeURIComponent(sid)))||[];
+        restam=atuais.length;
+        if(!restam) break;
+        log("<b>"+esc(lojaNome(l.id))+"</b>: apagando "+restam+"…");
+        for(const p of atuais){ try{ await _rdel("/api/stock/products/"+p.id); }catch(_){} }
+        passada++;
+      } while(restam>0 && passada<8);
+      const sobrou=((await _rget("/api/stock/products?store="+encodeURIComponent(sid)))||[]).length;
+      if(sobrou>0){ log("⚠️ Ainda sobraram "+sobrou+" em "+esc(lojaNome(l.id))+" (a API não apagou). Parei aqui para NÃO duplicar. Me avise."); continue; }
+      // Cria um por insumo, sem repetir nome.
+      const vistos=new Set(); let n=0;
+      for(const i of insumosDaLoja(l.id)){ const k=norm(i.nome); if(!k||vistos.has(k)) continue; vistos.add(k); try{ await _rpost("/api/stock/products",{storeId:sid,name:i.nome,unit:i.unidade||"un",category:"Geral",active:true}); n++; }catch(_){} }
+      log("✓ "+esc(lojaNome(l.id))+": lista zerada e "+n+" produtos criados.");
     }
-    log("<b>Concluído.</b> Agora o cadastro é feito no Audens Route; aqui é só leitura. Clique em Atualizar.");
-    estoqueRoute.loaded=false; toast("Produtos sincronizados no Audens Route.");
+    log("<b>Concluído.</b> Clique em Atualizar para ver.");
+    estoqueRoute.loaded=false; toast("Estoque do Route sincronizado.");
   }catch(e){ log("Erro: "+esc((e&&e.message)||e)); }
 }
 async function carregarEstoqueRoute(){
