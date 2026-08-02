@@ -2348,6 +2348,29 @@ function removerColabDia(id){ if(confirm("Excluir este dia?")){ DB.remove("colab
 const ROUTE_API="https://audens-route-api-452139275816.southamerica-east1.run.app";
 let estoqueRoute={loaded:false,carregando:false,erro:null,storeMap:{},produtos:{}};
 async function _rget(path){ const r=await fetch(ROUTE_API+path); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
+async function _rpost(path,body){ const r=await fetch(ROUTE_API+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})}); if(!r.ok) throw new Error("HTTP "+r.status); return r.status===204?null:r.json(); }
+async function _rdel(path){ const r=await fetch(ROUTE_API+path,{method:"DELETE"}); if(!r.ok) throw new Error("HTTP "+r.status); return r.status===204?null:r.json(); }
+// Uma vez: apaga os produtos do estoque no Audens Route e recadastra com os insumos do FC Control.
+async function sincronizarEstoqueRoute(){
+  if(!confirm("Isto APAGA todos os produtos de estoque do Audens Route (Burguer e Pizza) e recadastra com os insumos do FC Control (mesmos nomes). Continuar?")) return;
+  const log=m=>{ const el=document.getElementById("syncLog"); if(el){ el.style.display="block"; el.innerHTML+=m+"<br>"; } };
+  try{
+    const stores=(await _rget("/api/stores"))||[];
+    const map={}; stores.forEach(s=>{ const n=(s.name||"").toLowerCase(); if(n.includes("burg"))map.burguer=s.id; else if(n.includes("pizz"))map.pizza=s.id; });
+    for(const l of LOJAS){
+      const sid=map[l.id]; if(!sid){ log("⚠️ "+lojaNome(l.id)+" não encontrada no Route."); continue; }
+      log("<b>"+esc(lojaNome(l.id))+"</b>: apagando produtos atuais…");
+      const atuais=(await _rget("/api/stock/products?store="+encodeURIComponent(sid)))||[];
+      let del=0; for(const p of atuais){ try{ await _rdel("/api/stock/products/"+p.id); del++; }catch(_){} }
+      log("apagados "+del+". Cadastrando insumos…");
+      const ins=insumosDaLoja(l.id); let n=0;
+      for(const i of ins){ try{ await _rpost("/api/stock/products",{storeId:sid,name:i.nome,unit:i.unidade||"un",category:"Geral",active:true}); n++; }catch(_){} }
+      log("✓ "+n+" produtos criados em "+esc(lojaNome(l.id))+".");
+    }
+    log("<b>Concluído.</b> Agora o cadastro é feito no Audens Route; aqui é só leitura. Clique em Atualizar.");
+    estoqueRoute.loaded=false; toast("Produtos sincronizados no Audens Route.");
+  }catch(e){ log("Erro: "+esc((e&&e.message)||e)); }
+}
 async function carregarEstoqueRoute(){
   estoqueRoute.carregando=true; estoqueRoute.erro=null; estoqueRoute.loaded=true; render();
   try{
@@ -2387,6 +2410,12 @@ function renderEstoque(el){
       }<tr style="border-top:2px solid var(--ink)"><td colspan="3"><b>Total ${esc(lojaNome(loja))}</b></td><td class="r"><b class="neg">${reais(tot)}</b></td></tr></tbody></table>`:`<div class="empty">Sem contagem para ${esc(lojaNome(loja))} no Audens Route ainda.</div>`}
     </div></div>`;
   });
+  if(ehGestor()){
+    html+=`<div class="card" style="margin-top:14px;border-color:#e3d9f7"><div class="hd"><h3>Sincronizar produtos com o Audens Route (só gestor)</h3><p>Apaga os produtos de estoque do Route e recadastra com os insumos do FC Control (mesmos nomes). Depois disso, o cadastro é feito no Route e aqui é só leitura. Use uma vez.</p></div><div class="bd">
+      <button class="btn red" onclick="sincronizarEstoqueRoute()">Apagar e enviar produtos do FC Control → Route</button>
+      <div id="syncLog" class="small muted" style="display:none;margin-top:10px;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px"></div>
+    </div></div>`;
+  }
   el.innerHTML=html;
 }
 
