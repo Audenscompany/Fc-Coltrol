@@ -331,7 +331,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -351,7 +351,7 @@ function fazerLogin(){
     SESSAO={nome:GESTOR.nome,email:GESTOR.email,perfil:"gestor"};
   } else {
     const u=obj2arr(STATE.usuarios).find(x=>(x.email||"").toLowerCase()===email && x.ativo!==false);
-    if(u && u.senhaHash===hashSenha(senha)) SESSAO={nome:u.nome||email,email:email,perfil:"usuario",permissoes:u.permissoes||[]};
+    if(u && u.senhaHash===hashSenha(senha)) SESSAO={nome:u.nome||email,email:email,perfil:"usuario",permissoes:u.permissoes||[],loja:u.loja||"todos"};
     else { err.textContent="E-mail ou senha incorretos."; return; }
   }
   localStorage.setItem("fc_sessao",JSON.stringify(SESSAO));
@@ -363,6 +363,7 @@ function entrarApp(){
   document.getElementById("login").style.display="none";
   document.querySelector(".app").style.display="flex";
   document.getElementById("usuarioAtual").textContent = SESSAO? (SESSAO.nome||SESSAO.email) : "";
+  const lt=lojaTravada(); if(lt){ lojaFiltro=lt; localStorage.setItem("fc_loja_filtro",lt); }
   // primeira página permitida
   if(!temAcesso(paginaAtual)){ const prim=PAGINAS.find(p=>!p.oculto && temAcesso(p.id)); paginaAtual = prim? prim.id : "dashboard"; }
   montarNav(); render();
@@ -527,7 +528,9 @@ const lojaNome = id => lojaCfg(id).nome || (LOJAS.find(l=>l.id===id)?.nome) || (
 const lojaLogo = id => lojaCfg(id).logo || "";
 const painelLogo = () => (STATE.config && STATE.config.painelLogo) || "logo.svg";
 let lojaFiltro = localStorage.getItem("fc_loja_filtro") || "todos";
-function setLojaFiltro(v){ lojaFiltro=v; localStorage.setItem("fc_loja_filtro",v); render(); }
+// Usuário restrito a uma loja (ex.: cozinha) — não pode trocar o filtro.
+function lojaTravada(){ return (SESSAO && SESSAO.perfil==="usuario" && SESSAO.loja && SESSAO.loja!=="todos") ? SESSAO.loja : null; }
+function setLojaFiltro(v){ if(lojaTravada()) return; lojaFiltro=v; localStorage.setItem("fc_loja_filtro",v); render(); }
 const daLoja = m => lojaFiltro==="todos" || (m.loja||"")===lojaFiltro;
 // loja padrão para novos lançamentos manuais: a do filtro, ou a primeira da lista.
 const lojaPadrao = () => lojaFiltro!=="todos"? lojaFiltro : LOJAS[0].id;
@@ -569,6 +572,7 @@ const PAGINAS = [
   {id:"custos",icon:"📒",label:"Custos fixos/variáveis",grupo:"CUSTOS E OPERAÇÃO",render:renderCustos},
   {id:"precificacao",icon:"🏷️",label:"Precificação",grupo:"CUSTOS E OPERAÇÃO",render:renderPrecificacao},
   {id:"colaboradores",icon:"👥",label:"Colaboradores",grupo:"CUSTOS E OPERAÇÃO",render:renderColaboradores},
+  {id:"estoque",icon:"📦",label:"Estoque (contagem)",grupo:"CUSTOS E OPERAÇÃO",render:renderEstoque},
   {id:"categorias",icon:"🗂️",label:"Categorias",grupo:"CONFIGURAÇÕES",render:renderCategorias},
   {id:"formas",icon:"💳",label:"Formas de pagamento",grupo:"CONFIGURAÇÕES",render:renderFormas},
   {id:"canais",icon:"📡",label:"Canais de venda",grupo:"CONFIGURAÇÕES",render:renderCanais},
@@ -599,8 +603,10 @@ function render(){
   if(!sessaoValida()) return;
   const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
-  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos","dividas","paineldiv","calendario"].includes(paginaAtual);
-  const selLoja = `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
+  const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos","dividas","paineldiv","calendario","estoque"].includes(paginaAtual);
+  const selLoja = lojaTravada()
+    ? `<div class="tbfld"><label>Estabelecimento</label><div style="padding:7px 10px;font-weight:700">${esc(lojaNome(lojaTravada()))}</div></div>`
+    : `<div class="tbfld"><label>Estabelecimento</label><select onchange="setLojaFiltro(this.value)">
       <option value="todos"${lojaFiltro==="todos"?" selected":""}>Todos</option>
       ${LOJAS.map(l=>`<option value="${l.id}"${lojaFiltro===l.id?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("")}
     </select></div>`;
@@ -1688,13 +1694,18 @@ function renderUsuarios(el){
       <div><label class="f">Nome</label><input id="u_nome" placeholder="Ex.: Maria (Financeiro)"></div>
       <div><label class="f">E-mail</label><input id="u_email" type="email" placeholder="maria@email.com"></div>
       <div><label class="f">Senha</label><input id="u_senha" type="text" placeholder="senha de acesso"></div>
+      <div><label class="f">Loja</label><select id="u_loja"><option value="todos">Todas as lojas</option>${LOJAS.map(l=>`<option value="${l.id}">${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
     </div>
     <div style="margin-top:12px"><div class="secao-titulo">Pode acessar</div>${checks}</div>
-    <button class="btn" style="margin-top:12px" onclick="addUsuario()">Criar usuário</button>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" onclick="addUsuario()">Criar usuário</button>
+      <button class="btn ghost" onclick="preClienteCozinha()">Preencher como usuário de cozinha (só estoque)</button>
+    </div>
+    <div class="small muted" style="margin-top:6px">Usuário de cozinha: escolha a <b>loja</b> e marque só <b>Estoque (contagem)</b>. Ele só verá o estoque da própria loja.</div>
   </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Usuários (${usuarios.length})</h3></div><div class="bd">
     ${usuarios.length? `<table><thead><tr><th>Nome</th><th>E-mail</th><th>Acessos</th><th>Status</th><th></th></tr></thead><tbody>${
-      usuarios.map(u=>`<tr><td><b>${esc(u.nome||"—")}</b></td><td class="muted">${esc(u.email||"—")}</td><td class="small">${(u.permissoes||[]).map(id=>esc((PAGINAS.find(p=>p.id===id)||{}).label||id)).join(", ")||'<span class="muted">nenhum</span>'}</td><td>${u.ativo===false?'<span class="badge b-gray">inativo</span>':'<span class="badge b-green">ativo</span>'}</td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="alternarUsuario('${u._id}',${u.ativo===false})">${u.ativo===false?"ativar":"desativar"}</button> <button class="btn ghost sm" onclick="removerUsuario('${u._id}')">excluir</button></td></tr>`).join("")
+      usuarios.map(u=>`<tr><td><b>${esc(u.nome||"—")}</b>${(u.loja&&u.loja!=="todos")?` <span class="pill">${esc(lojaNome(u.loja))}</span>`:""}</td><td class="muted">${esc(u.email||"—")}</td><td class="small">${(u.permissoes||[]).map(id=>esc((PAGINAS.find(p=>p.id===id)||{}).label||id)).join(", ")||'<span class="muted">nenhum</span>'}</td><td>${u.ativo===false?'<span class="badge b-gray">inativo</span>':'<span class="badge b-green">ativo</span>'}</td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="alternarUsuario('${u._id}',${u.ativo===false})">${u.ativo===false?"ativar":"desativar"}</button> <button class="btn ghost sm" onclick="removerUsuario('${u._id}')">excluir</button></td></tr>`).join("")
     }</tbody></table>` : `<div class="empty">Nenhum usuário criado ainda.</div>`}
   </div></div>`;
 }
@@ -1703,8 +1714,13 @@ function addUsuario(){
   if(!email||!senha) return toast("Informe e-mail e senha.");
   const permissoes = paginasPermissionaveis().filter(p=>{const c=document.getElementById("perm_"+p.id);return c&&c.checked;}).map(p=>p.id);
   if(!permissoes.length) return toast("Marque pelo menos uma área de acesso.");
-  DB.push("usuarios",{nome:nome||email,email,senhaHash:hashSenha(senha),permissoes,ativo:true,criadoEm:Date.now()});
+  DB.push("usuarios",{nome:nome||email,email,senhaHash:hashSenha(senha),permissoes,loja:val("u_loja")||"todos",ativo:true,criadoEm:Date.now()});
   toast("Usuário criado.");
+}
+function preClienteCozinha(){
+  paginasPermissionaveis().forEach(p=>{ const c=document.getElementById("perm_"+p.id); if(c) c.checked=(p.id==="estoque"); });
+  const l=document.getElementById("u_loja"); if(l && l.value==="todos" && LOJAS[0]) l.value=LOJAS[0].id;
+  toast("Marquei só Estoque. Escolha a loja e clique em Criar usuário.");
 }
 function alternarUsuario(id,ativar){ DB.update("usuarios/"+id,{ativo:!!ativar}); }
 function removerUsuario(id){ if(confirm("Excluir este usuário?")){ DB.remove("usuarios/"+id); } }
@@ -2328,6 +2344,62 @@ function salvarColabDia(id,aprovar){
 }
 function removerColabDia(id){ if(confirm("Excluir este dia?")){ DB.remove("colabDias/"+id); } }
 
+/* ===================== ESTOQUE (contagem diária por loja) =============== */
+let estoqueData=null;
+function renderEstoque(el){
+  const loja = lojaTravada() || (lojaFiltro!=="todos"?lojaFiltro:null);
+  if(!loja){ document.getElementById("pgSub").textContent="Contagem diária de estoque — por loja."; el.innerHTML=bannerEscolherLoja("O estoque é por loja. Escolha a loja no topo:"); return; }
+  document.getElementById("pgSub").textContent="Contagem diária de estoque — "+lojaNome(loja);
+  if(!estoqueData) estoqueData=hojeISO();
+  const itens=obj2arr(STATE.estoqueItens).filter(i=>(i.loja||"")===loja && i.ativo!==false).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  const cont=(STATE.estoqueCont&&STATE.estoqueCont[loja+"__"+estoqueData])||{};
+  const q=cont.quantidades||{};
+  const gestor=ehGestor();
+  let html=`<div class="card" style="margin-bottom:14px"><div class="bd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div class="tbfld"><label class="f">Data da contagem</label><input type="date" id="est_data" value="${estoqueData}" onchange="estoqueData=this.value;render()"></div>
+    <div class="small muted">${cont.criadoEm?("Salva por "+esc(cont.por||"—")):"Sem contagem salva neste dia."}</div>
+  </div></div>`;
+  if(!itens.length){
+    html+=`<div class="card"><div class="bd"><div class="empty">Nenhum item na lista de estoque de ${esc(lojaNome(loja))}.${gestor?" Gere a partir dos insumos no quadro abaixo.":" Peça ao gestor para montar a lista."}</div></div></div>`;
+  } else {
+    html+=`<div class="card"><div class="hd"><h3>Contagem — ${fmtData(estoqueData)}</h3><p>Preencha a quantidade em estoque de cada item e salve.</p></div><div class="bd">
+      <table><thead><tr><th>Item</th><th>Unid.</th><th class="r" style="width:140px">Quantidade</th></tr></thead><tbody>${
+        itens.map(i=>`<tr><td>${esc(i.nome)}</td><td class="muted">${esc(i.unidade||"un")}</td><td class="r"><input class="precoEdit" style="width:110px;text-align:right" inputmode="decimal" id="eq_${i._id}" value="${q[i._id]!=null?String(q[i._id]).replace(".",","):""}" placeholder="0"></td></tr>`).join("")
+      }</tbody></table>
+      <button class="btn" style="margin-top:12px" onclick="salvarContagem('${loja}')">Salvar contagem</button>
+    </div></div>`;
+  }
+  if(gestor){
+    html+=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Editar lista de itens — ${esc(lojaNome(loja))}</h3><p>Adicione, renomeie ou remova itens. Dá para gerar a lista a partir dos insumos da Precificação.</p></div><div class="bd">
+      <div class="row">
+        <div style="flex:2"><label class="f">Novo item</label><input id="ei_nome" placeholder="Ex.: Caixa de tomate"></div>
+        <div><label class="f">Unidade</label><input id="ei_un" placeholder="un, kg, cx"></div>
+        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="addEstoqueItem('${loja}')">+ item</button></div>
+        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="gerarEstoqueDosInsumos('${loja}')">Gerar dos insumos</button></div>
+      </div>
+      ${itens.length?`<div class="hr"></div><table><thead><tr><th>Item</th><th>Unid.</th><th></th></tr></thead><tbody>${
+        itens.map(i=>`<tr><td><input class="precoEdit" style="width:240px" value="${esc(i.nome)}" onblur="renomearEstoqueItem('${i._id}',this.value)"></td><td><input class="precoEdit" style="width:70px" value="${esc(i.unidade||"")}" onblur="unidadeEstoqueItem('${i._id}',this.value)"></td><td class="r"><button class="btn ghost sm" onclick="removerEstoqueItem('${i._id}')">excluir</button></td></tr>`).join("")
+      }</tbody></table>`:""}
+    </div></div>`;
+  }
+  el.innerHTML=html;
+}
+function salvarContagem(loja){
+  const itens=obj2arr(STATE.estoqueItens).filter(i=>(i.loja||"")===loja && i.ativo!==false);
+  const quantidades={}; itens.forEach(i=>{ const v=val("eq_"+i._id); if(v!=="") quantidades[i._id]=num(v); });
+  DB.set("estoqueCont/"+loja+"__"+estoqueData,{loja,data:estoqueData,quantidades,por:(SESSAO&&(SESSAO.nome||SESSAO.email))||"",criadoEm:Date.now()});
+  toast("Contagem salva.");
+}
+function addEstoqueItem(loja){ const nome=val("ei_nome"); if(!nome) return toast("Informe o nome do item."); DB.push("estoqueItens",{loja,nome,unidade:val("ei_un")||"un",ativo:true,criadoEm:Date.now()}); toast("Item adicionado."); }
+function renomearEstoqueItem(id,v){ if(!String(v).trim()) return; DB.update("estoqueItens/"+id,{nome:String(v).trim()}); }
+function unidadeEstoqueItem(id,v){ DB.update("estoqueItens/"+id,{unidade:String(v).trim()||"un"}); }
+function removerEstoqueItem(id){ if(confirm("Remover este item da lista de estoque?")){ DB.remove("estoqueItens/"+id); } }
+function gerarEstoqueDosInsumos(loja){
+  const existentes=new Set(obj2arr(STATE.estoqueItens).filter(i=>(i.loja||"")===loja).map(i=>norm(i.nome)));
+  let n=0; insumosDaLoja(loja).forEach(i=>{ if(!existentes.has(norm(i.nome))){ DB.push("estoqueItens",{loja,nome:i.nome,unidade:i.unidade||"un",ativo:true,criadoEm:Date.now()}); existentes.add(norm(i.nome)); n++; } });
+  toast(n+" item(ns) importados dos insumos.");
+}
+
 /* ===================== IMPORTAR EXCEL (planilha Delivery Lucrativo) ======== */
 function precAbaImportar(c){
   const loja=lojaPrecAtual();
@@ -2645,6 +2717,8 @@ function boot(){
   bind("dividasDet","dividasDet");
   bind("colaboradores","colaboradores");
   bind("colabDias","colabDias");
+  bind("estoqueItens","estoqueItens");
+  bind("estoqueCont","estoqueCont");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
