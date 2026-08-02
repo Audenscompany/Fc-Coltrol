@@ -2344,75 +2344,51 @@ function salvarColabDia(id,aprovar){
 }
 function removerColabDia(id){ if(confirm("Excluir este dia?")){ DB.remove("colabDias/"+id); } }
 
-/* ===================== ESTOQUE (contagem diária por loja) ===============
-   A lista JÁ vem dos insumos da loja (Precificação). O gestor pode adicionar itens
-   extras e remover os que não quer contar (insumo removido fica "oculto"). */
-let estoqueData=null;
-function listaEstoque(loja){
-  const ocultos=(STATE.config&&STATE.config.estoqueOcultos&&STATE.config.estoqueOcultos[loja])||{};
-  const base=insumosDaLoja(loja).filter(i=>!ocultos[i._id]).map(i=>({id:i._id,nome:i.nome,unidade:i.unidade||"un",origem:"insumo"}));
-  const custom=obj2arr(STATE.estoqueItens).filter(i=>(i.loja||"")===loja && i.ativo!==false).map(i=>({id:i._id,nome:i.nome,unidade:i.unidade||"un",origem:"custom"}));
-  return base.concat(custom).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+/* ===================== ESTOQUE — valor parado (espelho do Audens Route) === */
+const ROUTE_API="https://audens-route-api-452139275816.southamerica-east1.run.app";
+let estoqueRoute={loaded:false,carregando:false,erro:null,storeMap:{},produtos:{}};
+async function _rget(path){ const r=await fetch(ROUTE_API+path); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
+async function carregarEstoqueRoute(){
+  estoqueRoute.carregando=true; estoqueRoute.erro=null; estoqueRoute.loaded=true; render();
+  try{
+    const stores=(await _rget("/api/stores"))||[];
+    const map={}; stores.forEach(s=>{ const n=(s.name||"").toLowerCase(); if(n.includes("burg")) map.burguer=s.id; else if(n.includes("pizz")) map.pizza=s.id; });
+    const prod={};
+    for(const l of LOJAS){ const sid=map[l.id]; try{ prod[l.id]= sid? ((await _rget("/api/stock/products?store="+encodeURIComponent(sid)+"&active=true"))||[]) : []; }catch(_){ prod[l.id]=[]; } }
+    estoqueRoute.storeMap=map; estoqueRoute.produtos=prod;
+  }catch(e){ estoqueRoute.erro=String((e&&e.message)||e); }
+  estoqueRoute.carregando=false; render();
+}
+function valorEstoqueLoja(loja){
+  const prods=(estoqueRoute.produtos&&estoqueRoute.produtos[loja])||[];
+  return prods.map(p=>{ const qtd=num(p.lastCounted); const ins=insumoPorNome(p.name,loja); const custo=ins?custoUnitario(ins):0; return {nome:p.name||"—",unidade:p.unit||"un",qtd,custo,valor:qtd*custo,temCusto:!!ins}; });
 }
 function renderEstoque(el){
-  const loja = lojaTravada() || (lojaFiltro!=="todos"?lojaFiltro:null);
-  if(!loja){ document.getElementById("pgSub").textContent="Contagem diária de estoque — por loja."; el.innerHTML=bannerEscolherLoja("O estoque é por loja. Escolha a loja no topo:"); return; }
-  document.getElementById("pgSub").textContent="Contagem diária de estoque — "+lojaNome(loja);
-  if(!estoqueData) estoqueData=hojeISO();
-  const itens=listaEstoque(loja);
-  const cont=(STATE.estoqueCont&&STATE.estoqueCont[loja+"__"+estoqueData])||{};
-  const q=cont.quantidades||{};
-  const gestor=ehGestor();
-  const ocultos=(STATE.config&&STATE.config.estoqueOcultos&&STATE.config.estoqueOcultos[loja])||{};
-  const nOcultos=Object.keys(ocultos).length;
+  document.getElementById("pgSub").textContent="Valor parado em estoque — contagem vinda do Audens Route.";
+  if(!estoqueRoute.loaded){ carregarEstoqueRoute(); }
+  const lojas = lojaFiltro!=="todos"?[lojaFiltro]:LOJAS.map(l=>l.id);
   let html=`<div class="card" style="margin-bottom:14px"><div class="bd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-    <div class="tbfld"><label class="f">Data da contagem</label><input type="date" id="est_data" value="${estoqueData}" onchange="estoqueData=this.value;render()"></div>
-    <div class="small muted">${cont.criadoEm?("Salva por "+esc(cont.por||"—")):"Sem contagem salva neste dia."}</div>
+    <div class="muted small">Fonte: <b>Audens Route</b> (contagem da cozinha). O valor usa o custo dos insumos da Precificação.</div>
+    <button class="btn ghost sm" onclick="estoqueRoute.loaded=false;carregarEstoqueRoute()">↻ Atualizar</button>
   </div></div>`;
-  if(!itens.length){
-    html+=`<div class="card"><div class="bd"><div class="empty">Nenhum item de estoque em ${esc(lojaNome(loja))}. Cadastre os insumos em <a class="linkmais" onclick="irPara('precificacao')">Precificação</a> — eles aparecem aqui automaticamente.</div></div></div>`;
-  } else {
-    html+=`<div class="card"><div class="hd"><h3>Contagem — ${fmtData(estoqueData)}</h3><p>Preencha a quantidade em estoque de cada item e salve.</p></div><div class="bd">
-      <table><thead><tr><th>Item</th><th>Unid.</th><th class="r" style="width:140px">Quantidade</th></tr></thead><tbody>${
-        itens.map(i=>`<tr><td>${esc(i.nome)}</td><td class="muted">${esc(i.unidade||"un")}</td><td class="r"><input class="precoEdit" style="width:110px;text-align:right" inputmode="decimal" id="eq_${i.id}" value="${q[i.id]!=null?String(q[i.id]).replace(".",","):""}" placeholder="0"></td></tr>`).join("")
-      }</tbody></table>
-      <button class="btn" style="margin-top:12px" onclick="salvarContagem('${loja}')">Salvar contagem</button>
+  if(estoqueRoute.carregando){ el.innerHTML=html+`<div class="card"><div class="bd"><div class="empty">Carregando contagem do Audens Route…</div></div></div>`; return; }
+  if(estoqueRoute.erro){ el.innerHTML=html+`<div class="card"><div class="bd"><div class="err">Não consegui ler o Audens Route (${esc(estoqueRoute.erro)}). Clique em Atualizar para tentar de novo.</div></div></div>`; return; }
+  const totalGeral=lojas.reduce((s,l)=>s+valorEstoqueLoja(l).reduce((a,x)=>a+x.valor,0),0);
+  html+=`<div class="grid g3" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">Valor parado em estoque</div><div class="val neg">${reais(totalGeral)}</div><div class="hint">${lojaFiltro==="todos"?"as duas lojas":esc(lojaNome(lojaFiltro))}</div></div>
+    ${LOJAS.map(l=>{const t=valorEstoqueLoja(l.id).reduce((a,x)=>a+x.valor,0); return `<div class="stat"><div class="lbl">${esc(lojaNome(l.id))}</div><div class="val">${reais(t)}</div></div>`;}).join("")}
+  </div>`;
+  lojas.forEach(loja=>{
+    const linhas=valorEstoqueLoja(loja).sort((a,b)=>b.valor-a.valor);
+    const tot=linhas.reduce((s,x)=>s+x.valor,0); const semCusto=linhas.filter(x=>!x.temCusto).length;
+    html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>${esc(lojaNome(loja))} <span class="pill">valor ${reais(tot)}</span></h3>${semCusto?`<p>${semCusto} item(ns) sem custo cadastrado (aparecem R$ 0). Cadastre o insumo com o mesmo nome na Precificação.</p>`:""}</div><div class="bd">
+      ${linhas.length?`<table><thead><tr><th>Produto</th><th class="r">Qtd contada</th><th class="r">Custo unit.</th><th class="r">Valor</th></tr></thead><tbody>${
+        linhas.map(x=>`<tr><td>${esc(x.nome)}${x.temCusto?"":' <span class="badge b-gold">custo a definir</span>'}</td><td class="r">${x.qtd} ${esc(x.unidade)}</td><td class="r muted">${x.temCusto?reais(x.custo):"—"}</td><td class="r"><b>${reais(x.valor)}</b></td></tr>`).join("")
+      }<tr style="border-top:2px solid var(--ink)"><td colspan="3"><b>Total ${esc(lojaNome(loja))}</b></td><td class="r"><b class="neg">${reais(tot)}</b></td></tr></tbody></table>`:`<div class="empty">Sem contagem para ${esc(lojaNome(loja))} no Audens Route ainda.</div>`}
     </div></div>`;
-  }
-  // Adicionar item — disponível para TODOS (a cozinha também pode adicionar).
-  html+=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Adicionar item</h3><p>Faltou algo na lista? Adicione aqui — vale para a contagem desta loja.</p></div><div class="bd">
-    <div class="row">
-      <div style="flex:2"><label class="f">Item</label><input id="ei_nome" placeholder="Ex.: Caixa de tomate"></div>
-      <div><label class="f">Unidade</label><input id="ei_un" placeholder="un, kg, cx"></div>
-      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="addEstoqueItem('${loja}')">+ adicionar</button></div>
-    </div>
-  </div></div>`;
-  // Apagar/remover itens — só o gestor (usuário master).
-  if(gestor){
-    html+=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Apagar itens — ${esc(lojaNome(loja))} (só gestor)</h3><p>Remova o que não quer contar. Insumo removido fica oculto (dá para restaurar); item extra é excluído.${nOcultos?` (${nOcultos} oculto[s])`:""}</p></div><div class="bd">
-      ${nOcultos?`<button class="btn ghost sm" onclick="restaurarEstoque('${loja}')">Restaurar ocultos</button><div class="hr"></div>`:""}
-      ${itens.length?`<table><thead><tr><th>Item</th><th>Unid.</th><th>Origem</th><th></th></tr></thead><tbody>${
-        itens.map(i=> i.origem==="custom"
-          ? `<tr><td><input class="precoEdit" style="width:220px" value="${esc(i.nome)}" onblur="renomearEstoqueItem('${i.id}',this.value)"></td><td><input class="precoEdit" style="width:70px" value="${esc(i.unidade||"")}" onblur="unidadeEstoqueItem('${i.id}',this.value)"></td><td class="muted small">extra</td><td class="r"><button class="btn ghost sm red" onclick="removerEstoqueItem('${i.id}')">apagar</button></td></tr>`
-          : `<tr><td>${esc(i.nome)}</td><td class="muted">${esc(i.unidade||"un")}</td><td class="muted small">insumo</td><td class="r"><button class="btn ghost sm red" onclick="ocultarEstoqueItem('${loja}','${i.id}')">apagar</button></td></tr>`
-        ).join("")
-      }</tbody></table>`:""}
-    </div></div>`;
-  }
+  });
   el.innerHTML=html;
 }
-function salvarContagem(loja){
-  const itens=listaEstoque(loja);
-  const quantidades={}; itens.forEach(i=>{ const v=val("eq_"+i.id); if(v!=="") quantidades[i.id]=num(v); });
-  DB.set("estoqueCont/"+loja+"__"+estoqueData,{loja,data:estoqueData,quantidades,por:(SESSAO&&(SESSAO.nome||SESSAO.email))||"",criadoEm:Date.now()});
-  toast("Contagem salva.");
-}
-function addEstoqueItem(loja){ const nome=val("ei_nome"); if(!nome) return toast("Informe o nome do item."); DB.push("estoqueItens",{loja,nome,unidade:val("ei_un")||"un",ativo:true,criadoEm:Date.now()}); toast("Item adicionado."); }
-function renomearEstoqueItem(id,v){ if(!String(v).trim()) return; DB.update("estoqueItens/"+id,{nome:String(v).trim()}); }
-function unidadeEstoqueItem(id,v){ DB.update("estoqueItens/"+id,{unidade:String(v).trim()||"un"}); }
-function removerEstoqueItem(id){ if(confirm("Remover este item extra?")){ DB.remove("estoqueItens/"+id); } }
-function ocultarEstoqueItem(loja,id){ const cur=Object.assign({},(STATE.config&&STATE.config.estoqueOcultos)||{}); cur[loja]=Object.assign({},cur[loja]||{}); cur[loja][id]=true; DB.update("config",{estoqueOcultos:cur}); toast("Item removido da contagem."); }
-function restaurarEstoque(loja){ const cur=Object.assign({},(STATE.config&&STATE.config.estoqueOcultos)||{}); cur[loja]={}; DB.update("config",{estoqueOcultos:cur}); toast("Itens restaurados."); }
 
 /* ===================== IMPORTAR EXCEL (planilha Delivery Lucrativo) ======== */
 function precAbaImportar(c){
