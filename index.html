@@ -2379,20 +2379,24 @@ function renderEstoque(el){
       <button class="btn" style="margin-top:12px" onclick="salvarContagem('${loja}')">Salvar contagem</button>
     </div></div>`;
   }
+  // Adicionar item — disponível para TODOS (a cozinha também pode adicionar).
+  html+=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Adicionar item</h3><p>Faltou algo na lista? Adicione aqui — vale para a contagem desta loja.</p></div><div class="bd">
+    <div class="row">
+      <div style="flex:2"><label class="f">Item</label><input id="ei_nome" placeholder="Ex.: Caixa de tomate"></div>
+      <div><label class="f">Unidade</label><input id="ei_un" placeholder="un, kg, cx"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="addEstoqueItem('${loja}')">+ adicionar</button></div>
+    </div>
+  </div></div>`;
+  // Apagar/remover itens — só o gestor (usuário master).
   if(gestor){
-    html+=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Ajustar a lista — ${esc(lojaNome(loja))}</h3><p>Os insumos já aparecem sozinhos. Aqui você adiciona itens extras ou remove os que não quer contar.${nOcultos?` (${nOcultos} oculto[s])`:""}</p></div><div class="bd">
-      <div class="row">
-        <div style="flex:2"><label class="f">Adicionar item extra</label><input id="ei_nome" placeholder="Ex.: Caixa de tomate"></div>
-        <div><label class="f">Unidade</label><input id="ei_un" placeholder="un, kg, cx"></div>
-        <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="addEstoqueItem('${loja}')">+ item</button></div>
-        ${nOcultos?`<div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="restaurarEstoque('${loja}')">Restaurar ocultos</button></div>`:""}
-      </div>
-      ${itens.length?`<div class="hr"></div><table><thead><tr><th>Item</th><th>Unid.</th><th>Origem</th><th></th></tr></thead><tbody>${
+    html+=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Apagar itens — ${esc(lojaNome(loja))} (só gestor)</h3><p>Remova o que não quer contar. Insumo removido fica oculto (dá para restaurar); item extra é excluído.${nOcultos?` (${nOcultos} oculto[s])`:""}</p></div><div class="bd">
+      ${nOcultos?`<button class="btn ghost sm" onclick="restaurarEstoque('${loja}')">Restaurar ocultos</button><div class="hr"></div>`:""}
+      ${itens.length?`<table><thead><tr><th>Item</th><th>Unid.</th><th>Origem</th><th></th></tr></thead><tbody>${
         itens.map(i=> i.origem==="custom"
-          ? `<tr><td><input class="precoEdit" style="width:220px" value="${esc(i.nome)}" onblur="renomearEstoqueItem('${i.id}',this.value)"></td><td><input class="precoEdit" style="width:70px" value="${esc(i.unidade||"")}" onblur="unidadeEstoqueItem('${i.id}',this.value)"></td><td class="muted small">extra</td><td class="r"><button class="btn ghost sm" onclick="removerEstoqueItem('${i.id}')">excluir</button></td></tr>`
-          : `<tr><td>${esc(i.nome)}</td><td class="muted">${esc(i.unidade||"un")}</td><td class="muted small">insumo</td><td class="r"><button class="btn ghost sm" onclick="ocultarEstoqueItem('${loja}','${i.id}')">remover</button></td></tr>`
+          ? `<tr><td><input class="precoEdit" style="width:220px" value="${esc(i.nome)}" onblur="renomearEstoqueItem('${i.id}',this.value)"></td><td><input class="precoEdit" style="width:70px" value="${esc(i.unidade||"")}" onblur="unidadeEstoqueItem('${i.id}',this.value)"></td><td class="muted small">extra</td><td class="r"><button class="btn ghost sm red" onclick="removerEstoqueItem('${i.id}')">apagar</button></td></tr>`
+          : `<tr><td>${esc(i.nome)}</td><td class="muted">${esc(i.unidade||"un")}</td><td class="muted small">insumo</td><td class="r"><button class="btn ghost sm red" onclick="ocultarEstoqueItem('${loja}','${i.id}')">apagar</button></td></tr>`
         ).join("")
-      }</tbody></table><div class="small muted" style="margin-top:6px">Itens "insumo" são renomeados na Precificação. Aqui você pode removê-los da contagem (ficam ocultos) e restaurar quando quiser.</div>`:""}
+      }</tbody></table>`:""}
     </div></div>`;
   }
   el.innerHTML=html;
