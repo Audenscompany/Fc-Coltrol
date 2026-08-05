@@ -331,7 +331,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -2436,12 +2436,56 @@ function colabPagamentos(c){
     <div class="stat"><div class="lbl">Salão/Cozinha</div><div class="val">${reais(totSalao)}</div></div>
     <div class="stat"><div class="lbl">Motoboys</div><div class="val">${reais(totMoto)}</div></div>
   </div>
+  ${cardContaColab(ini, totalGeral)}
   ${naoCad?`<div class="alert amber" style="margin-bottom:12px"><div><div class="at">${naoCad} pessoa(s) do salão sem cadastro</div><div class="ad">Cadastre em "Cadastro" para definir a diária e marcar carteira assinada (sem cadastro, a diária fica R$ 0).</div></div><button class="btn ghost sm" onclick="abaColab='cadastro';render()">Cadastro</button></div>`:""}
   <div class="card"><div class="hd"><h3>A pagar no ciclo</h3><p>Salão/cozinha: diária (exceto CLT) + rateio da taxa de serviço. Motoboys: valor do dia.</p></div><div class="bd">
     ${linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Total</th></tr></thead><tbody>${
       linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}${(!p.cadastrado&&p.tipo==="salao")?' <span class="badge b-gold">cadastrar</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
     }<tr style="border-top:2px solid var(--ink)"><td colspan="6"><b>Total do ciclo</b></td><td class="r"><b class="neg">${reais(totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste ciclo. Os dias entram automaticamente pelo grupo de caixa, ou você lança em "Dias lançados".</div>`}
   </div></div>`;
+}
+/* ----- Gera a conta a pagar do pagamento do ciclo (vira saída ao aprovar) - */
+function podePagarColab(){ return ehGestor() || temAcesso("saidas") || temAcesso("contas"); }
+function cardContaColab(ini, total){
+  const venc = maisDias(ini,7);
+  const reg = STATE.colabPagto && STATE.colabPagto[ini];
+  const conta = reg && reg.contaId ? STATE.contas[reg.contaId] : null;
+  const paga = conta && conta.status==="paga";
+  const existe = !!conta; // conta ainda existente (não excluída)
+  const desatualizado = existe && Math.abs(num(conta.valor)-num(total))>=0.01;
+  let corpo;
+  if(!existe){
+    corpo = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div><b>Pagamento em ${fmtData(venc)}</b> · total ${reais(total)}</div>
+      <div class="small muted">Cria uma conta a pagar com vencimento na data do pagamento. A aprovação (virar saída) é feita em Contas a pagar.</div></div>
+      ${podePagarColab()? `<button class="btn" onclick="gerarContaColab('${ini}',${total})">Gerar conta a pagar</button>`
+        : `<span class="badge b-gray">só gestor/financeiro gera</span>`}</div>`;
+  } else if(paga){
+    corpo = `<div><b>✅ Pago</b> · conta de ${reais(conta.valor)} lançada como saída. <a class="linkmais" onclick="irPara('contas')">ver em Contas a pagar →</a></div>`;
+  } else {
+    corpo = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div><b>Conta gerada:</b> ${reais(conta.valor)} · vence ${fmtData(conta.vencimento||venc)}</div>
+      <div class="small muted">${desatualizado? `⚠️ O total do ciclo mudou para ${reais(total)}. Atualize o valor da conta.` : "Aprove em Contas a pagar (botão Pagar) para lançar a saída."}</div></div>
+      <div style="display:flex;gap:8px">
+        ${desatualizado && podePagarColab()? `<button class="btn ghost sm" onclick="atualizarContaColab('${ini}',${total})">Atualizar valor</button>`:""}
+        <button class="btn sm" onclick="irPara('contas')">Ver em Contas a pagar</button>
+      </div></div>`;
+  }
+  return `<div class="card" style="margin-bottom:14px;border-color:#e3d9f7"><div class="hd"><h3>💵 Pagamento do ciclo</h3></div><div class="bd">${corpo}</div></div>`;
+}
+function gerarContaColab(ini, total){
+  if(!podePagarColab()) return toast("Sem permissão.");
+  if(num(total)<=0) return toast("Este ciclo não tem valor a pagar.");
+  const venc = maisDias(ini,7);
+  const id = DB.push("contas",{ descricao:"Pagamento colaboradores — ciclo "+cicloLabel(ini), valor:num(total), vencimento:venc, categoria:"SALARIOS", grupo:grupoDe("SALARIOS"), fornecedor:"Colaboradores", status:"aberta", origem:"colaboradores", cicloIni:ini, loja:LOJAS[0].id, criadoEm:Date.now() });
+  DB.set("colabPagto/"+ini, { contaId:id, valor:num(total), venc, em:Date.now() });
+  toast("Conta a pagar gerada. Aprove em Contas a pagar para virar saída.");
+}
+function atualizarContaColab(ini, total){
+  const reg = STATE.colabPagto && STATE.colabPagto[ini]; if(!reg||!reg.contaId) return;
+  DB.update("contas/"+reg.contaId,{ valor:num(total) });
+  DB.update("colabPagto/"+ini,{ valor:num(total) });
+  toast("Valor da conta atualizado.");
 }
 function colabCadastro(c){
   const lista=obj2arr(STATE.colaboradores).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
@@ -2939,6 +2983,7 @@ function boot(){
   bind("estoqueItens","estoqueItens");
   bind("estoqueCont","estoqueCont");
   bind("custoRev","custoRev");
+  bind("colabPagto","colabPagto");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
