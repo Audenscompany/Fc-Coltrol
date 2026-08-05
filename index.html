@@ -331,7 +331,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -1731,14 +1731,100 @@ function renderPrecificacao(el){
   const loja=lojaPrecAtual();
   if(!loja){ document.getElementById("pgSub").textContent="CMV, markup e preço sugerido — cada loja tem a sua precificação."; el.innerHTML=bannerEscolherLoja("A precificação é separada por loja (Burguer FC e Pizza FC têm dados diferentes). Escolha a loja:"); return; }
   document.getElementById("pgSub").textContent = `Precificação de ${lojaNome(loja)} · CMV, markup e preço sugerido (cardápio e iFood).`;
-  const abas = [["precos","Tabela de preços"],["produtos","Produtos"],["insumos","Insumos"],["parametros","Parâmetros"],["importar","Importar Excel"]];
+  const nPend = itensCustoPendentes().length;
+  const lblAtu = "Atualizar custos" + (nPend? ` <span class="badge b-red">${nPend}</span>` : "");
+  const abas = [["precos","Tabela de preços"],["produtos","Produtos"],["insumos","Insumos"],["atualizar",lblAtu],["parametros","Parâmetros"],["importar","Importar Excel"]];
   el.innerHTML = `<div class="tabs">${abas.map(([id,l])=>`<button class="${id===abaPrec?'active':''}" onclick="abaPrec='${id}';render()">${l}</button>`).join("")}</div><div id="abaConteudo"></div>`;
   const c = document.getElementById("abaConteudo");
   if(abaPrec==="precos") return precAbaPrecos(c);
   if(abaPrec==="produtos") return precAbaProdutos(c);
   if(abaPrec==="insumos") return precAbaInsumos(c);
+  if(abaPrec==="atualizar") return precAbaAtualizar(c);
   if(abaPrec==="parametros") return precAbaParametros(c);
   if(abaPrec==="importar") return precAbaImportar(c);
+}
+/* ---- Atualização de custos vinda dos comprovantes (WhatsApp) ------------- */
+function podeAprovarCusto(){ return ehGestor() || temAcesso("saidas"); }
+function revItens(r){ return Object.entries(r.itens||{}).map(([k,v])=>({idx:k, ...v})); }
+function itensCustoPendentes(){
+  return obj2arr(STATE.custoRev)
+    .filter(r=>r.status!=="concluido")
+    .flatMap(r=>revItens(r).filter(it=>!it.feito).map(it=>({rev:r._id, ...it})));
+}
+const custoRevLoja = {}; // reviewId -> loja escolhida
+function lojaDoRev(r){ return custoRevLoja[r._id] || r.loja || lojaPrecAtual() || (LOJAS[0]&&LOJAS[0].id); }
+function setLojaRev(id,loja){ custoRevLoja[id]=loja; render(); }
+function insumoMatch(nome,loja){ const k=norm(nome); return insumosDaLoja(loja).find(i=>norm(i.nome)===k) || insumosDaLoja(loja).find(i=>norm(i.nome).includes(k)||k.includes(norm(i.nome))); }
+function precAbaAtualizar(c){
+  const revs = obj2arr(STATE.custoRev).filter(r=>r.status!=="concluido" && revItens(r).some(it=>!it.feito))
+    .sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  if(!revs.length){
+    c.innerHTML = `<div class="card"><div class="bd"><div class="empty">Nenhuma atualização de custo pendente.<br><br>Quando você mandar uma <b>nota/cupom de compra</b> no grupo do WhatsApp, os itens aparecem aqui para você conferir, corrigir e aprovar — só então o custo do insumo é atualizado.</div></div></div>`;
+    return;
+  }
+  const pode = podeAprovarCusto();
+  c.innerHTML = `
+    ${pode? "" : `<div class="card" style="margin-bottom:12px"><div class="bd"><div class="hint">Você pode conferir, mas só o <b>gestor</b> ou o responsável pelo <b>financeiro</b> aprova a atualização de custo.</div></div></div>`}
+    ${revs.map(r=>{
+      const loja = lojaDoRev(r);
+      const itens = revItens(r).filter(it=>!it.feito);
+      const optLojas = LOJAS.map(l=>`<option value="${l.id}" ${l.id===loja?'selected':''}>${esc(lojaNome(l.id))}</option>`).join("");
+      return `<div class="card" style="margin-bottom:14px"><div class="hd">
+        <h3>${esc(r.fornecedor||"Compra")} · ${esc((r.data||"").split("-").reverse().join("/"))}</h3>
+        <p>${itens.length} item(ns) para revisar · origem: ${esc(r.origem||"—")}</p></div><div class="bd">
+        <div class="row" style="margin-bottom:10px"><div><label class="f">Loja destes custos</label>
+          <select onchange="setLojaRev('${r._id}',this.value)">${optLojas}</select></div></div>
+        <table><thead><tr><th>Item da nota</th><th>Insumo no sistema</th><th class="r">Qtd</th><th class="r">Valor pago</th><th class="r">Custo unit.</th><th></th></tr></thead><tbody>
+        ${itens.map(it=>{
+          const m = insumoMatch(it.nome, loja);
+          const opts = `<option value="__novo">➕ Criar novo insumo</option>` + insumosDaLoja(loja).sort((a,b)=>(a.nome||"").localeCompare(b.nome||"")).map(i=>`<option value="${i._id}" ${m&&m._id===i._id?'selected':''}>${esc(i.nome)}</option>`).join("");
+          const qtdPre = it.quantidade || (m? num(m.quantidadeCompra):1) || 1;
+          const valPre = it.valorTotal || it.valorUnitario*(it.quantidade||1) || 0;
+          const atual = m? custoUnitario(m) : 0;
+          const bId = `${r._id}_${it.idx}`;
+          return `<tr>
+            <td><b>${esc(it.nome)}</b>${it.unidade?` <span class="hint">(${esc(it.unidade)})</span>`:""}</td>
+            <td><select id="cr_ins_${bId}">${opts}</select></td>
+            <td class="r"><input id="cr_qtd_${bId}" style="width:80px;text-align:right" inputmode="decimal" value="${qtdPre}"></td>
+            <td class="r"><input id="cr_val_${bId}" style="width:100px;text-align:right" inputmode="decimal" value="${String(valPre).replace('.',',')}"></td>
+            <td class="r"><span class="hint">atual: ${reais(atual)}</span></td>
+            <td class="r" style="white-space:nowrap">
+              ${pode? `<button class="btn sm" onclick="aprovarCusto('${r._id}','${it.idx}','${loja}')">Aprovar</button> `:""}
+              <button class="btn ghost sm" onclick="ignorarCusto('${r._id}','${it.idx}')">Ignorar</button>
+            </td></tr>`;
+        }).join("")}
+        </tbody></table>
+        <div class="hint" style="margin-top:8px">Custo unitário = valor pago ÷ quantidade. Confira a quantidade na <b>mesma unidade</b> do insumo (ex.: em gramas se o insumo estiver em g).</div>
+      </div></div>`;
+    }).join("")}`;
+}
+function _revFinaliza(revId){
+  const r = STATE.custoRev[revId]; if(!r) return;
+  const itens = Object.values(r.itens||{});
+  if(itens.length && itens.every(it=>it.feito)) DB.update("custoRev/"+revId,{status:"concluido"});
+}
+function aprovarCusto(revId, idx, loja){
+  if(!podeAprovarCusto()) return toast("Sem permissão para aprovar.");
+  const b=`${revId}_${idx}`;
+  const sel = val("cr_ins_"+b);
+  const qtd = num(val("cr_qtd_"+b)) || 1;
+  const valor = num(val("cr_val_"+b));
+  if(valor<=0) return toast("Informe o valor pago.");
+  const r = STATE.custoRev[revId]; const it = r && r.itens && r.itens[idx];
+  if(sel==="__novo"){
+    DB.push("insumos",{ loja, nome:(it&&it.nome)||"Insumo", quantidadeCompra:qtd, unidade:(it&&it.unidade)||"un", valorCompra:valor });
+  } else {
+    const cur = STATE.insumos[sel]||{};
+    DB.update("insumos/"+sel,{ quantidadeCompra:qtd, valorCompra:valor, unidade:cur.unidade||(it&&it.unidade)||"un" });
+  }
+  DB.update("custoRev/"+revId+"/itens/"+idx,{ feito:true });
+  setTimeout(()=>_revFinaliza(revId), 250);
+  toast("Custo atualizado.");
+}
+function ignorarCusto(revId, idx){
+  DB.update("custoRev/"+revId+"/itens/"+idx,{ feito:true });
+  setTimeout(()=>_revFinaliza(revId), 250);
+  toast("Item ignorado.");
 }
 function precAbaPrecos(c){
   const loja = lojaPrecAtual();
@@ -2216,12 +2302,117 @@ function pagamentoCiclo(ini, fim){
 }
 function renderColaboradores(el){
   document.getElementById("pgSub").textContent="Pagamento de colaboradores por ciclo (quarta a terça) e cadastro.";
-  const abas=[["pagamentos","Pagamentos"],["cadastro","Cadastro"],["dias","Dias lançados"]];
+  const abas=[["pagamentos","Pagamentos"],["historico","Histórico"],["cadastro","Cadastro"],["dias","Dias lançados"]];
   el.innerHTML=`<div class="tabs">${abas.map(([id,l])=>`<button class="${id===abaColab?'active':''}" onclick="abaColab='${id}';render()">${l}</button>`).join("")}</div><div id="colabConteudo"></div>`;
   const c=document.getElementById("colabConteudo");
   if(abaColab==="cadastro") return colabCadastro(c);
   if(abaColab==="dias") return colabDiasView(c);
+  if(abaColab==="historico") return colabHistorico(c);
   return colabPagamentos(c);
+}
+/* ------- Histórico: filtra por período, total + por dia, exporta PDF ------ */
+let histIni=null, histFim=null;
+function histParams(){ if(!histIni) histIni=maisDias(hojeISO(),-29); if(!histFim) histFim=hojeISO(); if(histIni>histFim){ const t=histIni; histIni=histFim; histFim=t; } }
+function aplicarHist(){ histIni=val("hist_ini")||histIni; histFim=val("hist_fim")||histFim; render(); }
+function presetHist(tipo){
+  const hoje=hojeISO();
+  if(tipo==="mes"){ histIni=hoje.slice(0,8)+"01"; histFim=hoje; }
+  else if(tipo==="30"){ histIni=maisDias(hoje,-29); histFim=hoje; }
+  else if(tipo==="ciclo"){ const i=cicloInicio(hoje); histIni=i; histFim=cicloFim(i); }
+  render();
+}
+function dadosHistorico(ini,fim){
+  const lista=obj2arr(STATE.colaboradores);
+  const cb={}; lista.forEach(c=>{ cb[chaveColab(c.nome,lista)]=c; });
+  const dias=obj2arr(STATE.colabDias).filter(d=>(d.data||"")>=ini && (d.data||"")<=fim && d.status!=="pendente").sort((a,b)=>(a.data||"").localeCompare(b.data||""));
+  const perDay=dias.map(d=>{
+    const salao=(d.salao||[]).map(n=>String(n).trim()).filter(Boolean);
+    let diarias=0; salao.forEach(nome=>{ const c=cb[chaveColab(nome,lista)]; if(!(c&&c.clt)) diarias+=(c?num(c.diaria):0); });
+    const taxa=num(d.taxaServico);
+    const moto=(d.motoboys||[]).reduce((s,m)=>s+num(m&&m.valor),0);
+    const salaoR=diarias+taxa;
+    return { data:d.data, nS:salao.length, nM:(d.motoboys||[]).filter(m=>m&&m.nome).length, diarias, taxa, salaoR, motoR:moto, total:salaoR+moto };
+  });
+  const linhas=pagamentoCiclo(ini,fim);
+  const totSalao=linhas.filter(p=>p.tipo==="salao").reduce((s,p)=>s+p.total,0);
+  const totMoto=linhas.filter(p=>p.tipo==="motoboy").reduce((s,p)=>s+p.total,0);
+  return { dias, perDay, linhas, totSalao, totMoto, totalGeral:totSalao+totMoto };
+}
+function colabHistorico(c){
+  histParams();
+  const ini=histIni, fim=histFim;
+  const d=dadosHistorico(ini,fim);
+  c.innerHTML=`
+  <div class="card" style="margin-bottom:14px"><div class="bd">
+    <div class="row" style="align-items:flex-end">
+      <div><label class="f">De</label><input type="date" id="hist_ini" value="${ini}"></div>
+      <div><label class="f">Até</label><input type="date" id="hist_fim" value="${fim}"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn sm" onclick="aplicarHist()">Aplicar</button></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn primary sm" onclick="baixarPdfColab()">📄 Baixar PDF</button></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn ghost sm" onclick="presetHist('ciclo')">Ciclo atual</button>
+      <button class="btn ghost sm" onclick="presetHist('mes')">Este mês</button>
+      <button class="btn ghost sm" onclick="presetHist('30')">Últimos 30 dias</button>
+    </div>
+  </div></div>
+  <div class="grid g4" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">Total no período</div><div class="val neg">${reais(d.totalGeral)}</div><div class="hint">${fmtData(ini)} a ${fmtData(fim)}</div></div>
+    <div class="stat"><div class="lbl">Salão/Cozinha</div><div class="val">${reais(d.totSalao)}</div></div>
+    <div class="stat"><div class="lbl">Motoboys</div><div class="val">${reais(d.totMoto)}</div></div>
+    <div class="stat"><div class="lbl">Dias lançados</div><div class="val">${d.perDay.length}</div></div>
+  </div>
+  <div class="card" style="margin-bottom:14px"><div class="hd"><h3>Total por colaborador</h3><p>Soma de tudo dentro do período selecionado.</p></div><div class="bd">
+    ${d.linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Total</th></tr></thead><tbody>${
+      d.linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
+    }<tr style="border-top:2px solid var(--ink)"><td colspan="6"><b>Total</b></td><td class="r"><b class="neg">${reais(d.totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste período.</div>`}
+  </div></div>
+  <div class="card"><div class="hd"><h3>Por dia</h3><p>Resumo de cada dia dentro do período.</p></div><div class="bd">
+    ${d.perDay.length?`<table><thead><tr><th>Data</th><th class="r">Salão</th><th class="r">Motoboys</th><th class="r">Diárias</th><th class="r">Taxa serv.</th><th class="r">Total moto</th><th class="r">Total dia</th></tr></thead><tbody>${
+      d.perDay.map(x=>`<tr><td><b>${fmtData(x.data)}</b></td><td class="r">${x.nS}</td><td class="r">${x.nM}</td><td class="r">${x.diarias?reais(x.diarias):"—"}</td><td class="r">${x.taxa?reais(x.taxa):"—"}</td><td class="r">${x.motoR?reais(x.motoR):"—"}</td><td class="r"><b>${reais(x.total)}</b></td></tr>`).join("")
+    }</tbody></table>`:`<div class="empty">Nenhum dia lançado neste período.</div>`}
+  </div></div>`;
+}
+function baixarPdfColab(){
+  histParams();
+  const ini=histIni, fim=histFim, d=dadosHistorico(ini,fim);
+  const linhasTot=d.linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' (CLT)':''}</td><td>${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("");
+  const linhasDia=d.perDay.map(x=>`<tr><td>${fmtData(x.data)}</td><td class="r">${x.nS}</td><td class="r">${x.nM}</td><td class="r">${x.diarias?reais(x.diarias):"—"}</td><td class="r">${x.taxa?reais(x.taxa):"—"}</td><td class="r">${x.motoR?reais(x.motoR):"—"}</td><td class="r"><b>${reais(x.total)}</b></td></tr>`).join("");
+  const doc=`<!doctype html><html><head><meta charset="utf-8"><title>Relatório de Colaboradores</title>
+  <style>
+    *{font-family:Arial,Helvetica,sans-serif;box-sizing:border-box}
+    body{margin:24px;color:#1a1a1a}
+    h1{font-size:20px;margin:0 0 4px} .sub{color:#666;font-size:13px;margin-bottom:16px}
+    .cards{display:flex;gap:12px;margin-bottom:18px}
+    .card{flex:1;border:1px solid #ddd;border-radius:8px;padding:10px}
+    .card .l{font-size:11px;color:#666;text-transform:uppercase} .card .v{font-size:18px;font-weight:bold}
+    h2{font-size:14px;margin:18px 0 8px;border-bottom:2px solid #6b3fa0;padding-bottom:4px;color:#6b3fa0}
+    table{width:100%;border-collapse:collapse;font-size:12px}
+    th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+    th{background:#f3eefb} .r{text-align:right}
+    tfoot td,.tot td{font-weight:bold;background:#faf7ff}
+    @media print{body{margin:12mm}}
+  </style></head><body>
+    <h1>Relatório de Colaboradores</h1>
+    <div class="sub">Período: ${fmtData(ini)} a ${fmtData(fim)} · gerado em ${fmtData(hojeISO())}</div>
+    <div class="cards">
+      <div class="card"><div class="l">Total no período</div><div class="v">${reais(d.totalGeral)}</div></div>
+      <div class="card"><div class="l">Salão/Cozinha</div><div class="v">${reais(d.totSalao)}</div></div>
+      <div class="card"><div class="l">Motoboys</div><div class="v">${reais(d.totMoto)}</div></div>
+      <div class="card"><div class="l">Dias lançados</div><div class="v">${d.perDay.length}</div></div>
+    </div>
+    <h2>Total por colaborador</h2>
+    <table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Total</th></tr></thead>
+    <tbody>${linhasTot||'<tr><td colspan="7">Sem dados no período.</td></tr>'}</tbody>
+    ${d.linhas.length?`<tfoot><tr><td colspan="6">Total</td><td class="r">${reais(d.totalGeral)}</td></tr></tfoot>`:""}</table>
+    <h2>Por dia</h2>
+    <table><thead><tr><th>Data</th><th class="r">Salão</th><th class="r">Motoboys</th><th class="r">Diárias</th><th class="r">Taxa serv.</th><th class="r">Total moto</th><th class="r">Total dia</th></tr></thead>
+    <tbody>${linhasDia||'<tr><td colspan="7">Sem dados no período.</td></tr>'}</tbody></table>
+  </body></html>`;
+  const win=window.open("","_blank");
+  if(!win){ toast("Libere o pop-up para gerar o PDF."); return; }
+  win.document.write(doc); win.document.close(); win.focus();
+  setTimeout(()=>{ try{ win.print(); }catch(_){} }, 500);
 }
 function colabPagamentos(c){
   if(!cicloRef) cicloRef=cicloInicio(hojeISO());
@@ -2747,6 +2938,7 @@ function boot(){
   bind("colabDias","colabDias");
   bind("estoqueItens","estoqueItens");
   bind("estoqueCont","estoqueCont");
+  bind("custoRev","custoRev");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
