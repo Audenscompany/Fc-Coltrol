@@ -2161,6 +2161,71 @@ function importarDividas(){
   toast("Dívidas dos CNPJs importadas.");
 }
 function mudarStatusDivida(id,v){ DB.update("dividas/"+id,{status:v}); toast("Status atualizado."); }
+let dividaEditId=null;
+function editarDividaInicio(id){ dividaEditId=id; render(); }
+function linhaEdicaoDivida(d){
+  const parcelada = d.origem==="negociada" && d.acordoId;
+  const a = acordoInfo(d);
+  const nParc = parcelada ? (num(d.totalParcelas)|| (a?a.total:12)) : 12;
+  const pagas = parcelada ? (a?a.pagas:0) : 0;
+  const abertas = parcelada ? obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId && c.status!=="paga").sort((x,y)=>(x.vencimento||"").localeCompare(y.vencimento||"")) : [];
+  const venc1 = abertas.length ? abertas[0].vencimento : hojeISO();
+  const freq = d.frequencia||"mensal";
+  return `<tr><td colspan="7" style="background:#f6f2fe">
+    <div class="row">
+      <div style="flex:1"><label class="f">Categoria / nome</label><input id="ed_cat_${d._id}" value="${esc(d.categoria||'')}"></div>
+      <div style="flex:2"><label class="f">Detalhe</label><input id="ed_det_${d._id}" value="${esc(d.detalhe||'')}"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Valor total (R$)</label><input id="ed_val_${d._id}" inputmode="decimal" value="${d.valor!=null?String(d.valor).replace('.',','):''}"></div>
+      <div style="flex:2"><label class="f">Onde negociar</label><input id="ed_onde_${d._id}" value="${esc(d.onde||'')}"></div>
+      <div style="flex:2"><label class="f">Prazo / observação</label><input id="ed_prazo_${d._id}" value="${esc(d.prazo||'')}"></div>
+    </div>
+    ${parcelada?`<div style="margin-top:12px;border-top:1px solid #e3d9f7;padding-top:10px">
+      <div style="font-weight:700;color:var(--purple-d);margin-bottom:8px">Refazer parcelamento</div>
+      <div class="row">
+        <div><label class="f">Nº de parcelas</label><input id="ed_n_${d._id}" inputmode="numeric" value="${nParc}"></div>
+        <div><label class="f">Parcelas já pagas</label><input id="ed_pg_${d._id}" inputmode="numeric" value="${pagas}"></div>
+        <div><label class="f">1º venc. em aberto</label><input type="date" id="ed_v1_${d._id}" value="${venc1}"></div>
+        <div><label class="f">Frequência</label><select id="ed_fr_${d._id}"><option value="mensal"${freq==="mensal"?" selected":""}>Mensal</option><option value="quinzenal"${freq==="quinzenal"?" selected":""}>Quinzenal</option><option value="semanal"${freq==="semanal"?" selected":""}>Semanal</option></select></div>
+        <div><label class="f">Categoria (DRE)</label><select id="ed_cs_${d._id}">${optCategorias(d.categoriaSaida)}</select></div>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px"><input type="checkbox" id="ed_refazer_${d._id}" style="width:18px;height:18px"> Regerar as parcelas em aberto com estes valores (apaga as em aberto e recria; as já pagas ficam)</label>
+    </div>`:""}
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn sm" onclick="salvarEdicaoDivida('${d._id}')">Salvar</button>
+      <button class="btn ghost sm" onclick="dividaEditId=null;render()">Cancelar</button>
+    </div>
+  </td></tr>`;
+}
+function salvarEdicaoDivida(id){
+  const d=STATE.dividas[id]; if(!d) return;
+  const patch={ categoria:val("ed_cat_"+id)||d.categoria, detalhe:val("ed_det_"+id)||"", valor:num(val("ed_val_"+id)), onde:val("ed_onde_"+id)||"", prazo:val("ed_prazo_"+id)||"" };
+  const parcelada = d.origem==="negociada" && d.acordoId;
+  const refazer = parcelada && document.getElementById("ed_refazer_"+id) && document.getElementById("ed_refazer_"+id).checked;
+  if(parcelada){
+    const n=Math.max(1,Math.round(num(val("ed_n_"+id))||1));
+    const pagas=Math.min(n,Math.max(0,Math.round(num(val("ed_pg_"+id))||0)));
+    const freq=val("ed_fr_"+id)||"mensal";
+    patch.totalParcelas=n; patch.parcelasPagas=pagas; patch.frequencia=freq; patch.categoriaSaida=val("ed_cs_"+id)||d.categoriaSaida;
+    if(refazer){
+      const total=num(val("ed_val_"+id))||num(d.valor);
+      const venc1=val("ed_v1_"+id)||hojeISO();
+      const cat=patch.categoriaSaida;
+      const desc=patch.categoria;
+      // apaga as parcelas em aberto (mantém as pagas)
+      obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId && c.status!=="paga").forEach(c=>DB.remove("contas/"+c._id));
+      // recria as parcelas de (pagas+1) até n
+      let acum=0;
+      for(let k=1;k<=n;k++){ const p=k===n?Math.round((total-acum)*100)/100:Math.round(total/n*100)/100; acum+=p;
+        if(k>pagas){ DB.push("contas",{descricao:desc+" — parcela "+k+"/"+n,valor:p,vencimento:vencParcela(venc1,freq,k-(pagas+1)),categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja:d.loja,recorrencia:"nenhuma",status:"aberta",acordoId:d.acordoId,origem:"divida",criadoEm:Date.now()}); }
+      }
+      patch.detalhe = "Negociada — "+n+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(total/n);
+    }
+  }
+  DB.update("dividas/"+id,patch);
+  dividaEditId=null; toast(refazer?"Dívida e parcelas atualizadas.":"Dívida atualizada.");
+}
 function removerDivida(id){ if(confirm("Excluir esta dívida?")){ DB.remove("dividas/"+id); } }
 function addDivida(){ const loja=val("dv_loja")||lojaPadrao(); const categoria=val("dv_cat"); if(!categoria) return toast("Informe a categoria."); DB.push("dividas",{loja,cnpj:CNPJ_LOJA[loja]||"",categoria,detalhe:val("dv_det")||"",valor:num(val("dv_val")),onde:val("dv_onde")||"",prazo:"",status:val("dv_status")||"A negociar",origem:"manual",criadoEm:Date.now()}); toast("Dívida adicionada."); }
 // Soma m meses a uma data ISO (mantém o dia; ajusta fim de mês).
@@ -2171,7 +2236,7 @@ function addDiasISO(iso,dias){ const d=new Date((iso||hojeISO())+"T00:00:00"); d
 function vencParcela(venc,freq,k){ if(freq==="semanal") return addDiasISO(venc,7*k); if(freq==="quinzenal") return addDiasISO(venc,14*k); return addMesesISO(venc,k); }
 const FREQ_LABEL={mensal:"mensal",quinzenal:"quinzenal",semanal:"semanal"};
 // Info do acordo (parcelas): quantas pagas, total e saldo em aberto (contas ligadas por acordoId).
-function acordoInfo(d){ if(!d||!d.acordoId) return null; const cs=obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId); if(!cs.length) return null; const pagas=cs.filter(c=>c.status==="paga").length; const aberto=cs.filter(c=>c.status!=="paga").reduce((s,c)=>s+num(c.valor),0); return {pagas,total:cs.length,aberto}; }
+function acordoInfo(d){ if(!d||!d.acordoId) return null; const cs=obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId); if(!cs.length && !num(d.totalParcelas)) return null; const pagasReais=cs.filter(c=>c.status==="paga").length; const aberto=cs.filter(c=>c.status!=="paga").reduce((s,c)=>s+num(c.valor),0); const pagas=Math.max(pagasReais, num(d.parcelasPagas)||0); const total=num(d.totalParcelas)||cs.length; return {pagas,total,aberto}; }
 // Valor "vivo" da dívida: se for parcelada, o saldo das parcelas em aberto; senão o valor cadastrado.
 function valorEmAberto(d){ const a=acordoInfo(d); return a? a.aberto : num(d.valor); }
 // Cria uma dívida NEGOCIADA e gera as parcelas em Contas a pagar (entram no fluxo e, ao pagar, no DRE).
@@ -2228,15 +2293,15 @@ function renderDividas(el){
       const totDet=det.reduce((s,r)=>s+num(r.consolidado),0);
       html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>${esc(lojaNome(loja))} <span class="pill">${esc(CNPJ_LOJA[loja]||"")}</span></h3><p>Saldo em aberto: <b class="neg">${reais(tot)}</b></p></div><div class="bd">
         <table><thead><tr><th>Categoria</th><th>Detalhe</th><th class="r">Valor</th><th>Onde negociar</th><th>Prazo / observação</th><th>Status</th><th></th></tr></thead><tbody>${
-          ds.map(d=>{const a=acordoInfo(d); return `<tr>
+          ds.map(d=> d._id===dividaEditId ? linhaEdicaoDivida(d) : (()=>{const a=acordoInfo(d); return `<tr>
             <td><b>${esc(d.categoria)}</b>${d.origem==="negociada"?' <span class="badge b-gold">parcelada</span>':''}</td>
             <td class="muted" style="max-width:260px">${esc(d.detalhe||"—")}${a?`<br><span class="badge ${a.pagas>=a.total?'b-green':'b-gray'}">${a.pagas}/${a.total} parcelas pagas</span>`:''}</td>
             <td class="r"><b class="neg">${reais(valorEmAberto(d))}</b>${a&&a.pagas>0?`<br><span class="small muted">de ${reais(d.valor)}</span>`:''}</td>
             <td class="muted" style="max-width:190px">${esc(d.onde||"—")}</td>
             <td class="muted" style="max-width:210px">${esc(d.prazo||"—")}</td>
             <td><select onchange="mudarStatusDivida('${d._id}',this.value)">${optStatusDivida(d.status)}</select></td>
-            <td class="r"><button class="btn ghost sm" onclick="removerDivida('${d._id}')">×</button></td>
-          </tr>`;}).join("")
+            <td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="editarDividaInicio('${d._id}')">editar</button> <button class="btn ghost sm" onclick="removerDivida('${d._id}')">×</button></td>
+          </tr>`;})()).join("")
         }</tbody></table>
         ${det.length?`<details style="margin-top:12px"><summary style="cursor:pointer;font-weight:700;color:var(--purple-d)">Ver detalhe por competência (SIEF) — ${det.length} lançamentos · consolidado ${reais(totDet)}</summary>
           <table style="margin-top:10px"><thead><tr><th>Tributo</th><th>Período</th><th>Vencimento</th><th class="r">Valor original</th><th class="r">Saldo devedor</th><th class="r">Consolidado</th></tr></thead><tbody>${
