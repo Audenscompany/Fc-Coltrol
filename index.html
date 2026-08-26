@@ -973,14 +973,14 @@ function renderContas(el){
   const optLoja = LOJAS.map(l=>`<option value="${l.id}"${l.id===lojaPadrao()?" selected":""}>${esc(l.nome)}</option>`).join("");
   const fornecedores = [...new Set(obj2arr(STATE.saidas).concat(obj2arr(STATE.contas)).map(s=>s.fornecedor).filter(Boolean))];
   const abertasTodas = obj2arr(STATE.contas).filter(c=>c.status!=="paga" && daLoja(c)).sort((a,b)=>(a.vencimento||"").localeCompare(b.vencimento||""));
-  const recorrentes = abertasTodas.filter(c=>c.recorrencia==="mensal");
-  const abertas = abertasTodas.filter(c=>c.recorrencia!=="mensal");
+  const recorrentes = abertasTodas.filter(c=>c.recorrencia && c.recorrencia!=="nenhuma");
+  const abertas = abertasTodas.filter(c=>!c.recorrencia || c.recorrencia==="nenhuma");
   const pagas = obj2arr(STATE.contas).filter(c=>c.status==="paga" && daLoja(c)).sort((a,b)=>(b.pagoEm||0)-(a.pagoEm||0)).slice(0,30);
   const linhaConta = c => c._id===contaEditId ? linhaEdicaoConta(c) : `<tr>
         <td>${fmtData(c.vencimento)}</td>
         <td><span class="badge ${venc(c.vencimento).cls}">${venc(c.vencimento).txt}</span></td>
         <td><span class="pill">${esc(lojaNome(c.loja))}</span></td>
-        <td>${esc(c.descricao||"—")}${c.recorrencia==="mensal"?' <span class="pill">mensal</span>':''}</td>
+        <td>${esc(c.descricao||"—")}${recLabel(c.recorrencia)?` <span class="pill">${recLabel(c.recorrencia)}</span>`:''}</td>
         <td class="muted">${catLabel(c.categoria)}</td>
         <td class="muted">${esc(c.fornecedor||"—")}</td>
         <td class="r"><b class="neg">${reais(c.valor)}</b></td>
@@ -1003,7 +1003,7 @@ function renderContas(el){
       <div><label class="f">Categoria</label><select id="c_cat">${optCat}</select></div>
       <div><label class="f">Fornecedor (opcional)</label><input id="c_forn" list="fornListC" placeholder="Nenhum"><datalist id="fornListC">${fornecedores.map(f=>`<option value="${esc(f)}">`).join("")}</datalist></div>
       <div><label class="f">Estabelecimento</label><select id="c_loja" onchange="document.getElementById('c_rateio').style.display=this.value==='__ambas'?'flex':'none'">${optLoja}<option value="__ambas">Ambas (dividir)</option></select></div>
-      <div><label class="f">Repetir</label><select id="c_rec"><option value="nenhuma">Não repete</option><option value="mensal">Todo mês</option></select></div>
+      <div><label class="f">Repetir</label><select id="c_rec"><option value="nenhuma">Não repete</option><option value="semanal">Toda semana</option><option value="quinzenal">A cada 15 dias</option><option value="mensal">Todo mês</option></select></div>
     </div>
     <div class="row" id="c_rateio" style="margin-top:10px;display:none;background:#f3effb;border:1px solid #e3d9f7;border-radius:10px;padding:10px">
       <div style="flex:1 1 100%;font-size:12px;color:#5b2bb0;font-weight:700">Rateio entre as lojas — % do valor para cada uma (precisa somar 100%)</div>
@@ -1011,7 +1011,7 @@ function renderContas(el){
     </div>
     <button class="btn" style="margin-top:12px" onclick="addConta()">Adicionar conta</button>
   </div></div>
-  ${recorrentes.length? `<div class="card" style="margin-top:14px;border-color:#e3d9f7"><div class="hd"><h3>🔁 Repetem todo mês (${recorrentes.length})</h3><p>Contas fixas mensais (aluguel, salários, assinaturas…). Clique em <b>editar</b> para mudar valor, vencimento ou parar de repetir — o mês seguinte é criado com base nesta ao pagar.</p></div><div class="bd">
+  ${recorrentes.length? `<div class="card" style="margin-top:14px;border-color:#e3d9f7"><div class="hd"><h3>🔁 Contas que se repetem (${recorrentes.length})</h3><p>Fixas semanais, quinzenais ou mensais (aluguel, salários, assinaturas…). Clique em <b>editar</b> para mudar valor, vencimento, frequência ou parar de repetir — a próxima é criada no intervalo certo ao pagar.</p></div><div class="bd">
     <table><thead><tr><th>Vencimento</th><th>Status</th><th>Loja</th><th>Descrição</th><th>Categoria</th><th>Fornecedor</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
       recorrentes.map(linhaConta).join("")
     }</tbody></table>
@@ -1052,13 +1052,20 @@ function pagarConta(id){
   // vira uma saída no caixa, na data de hoje
   DB.push("caixa/saidas",{data:hojeISO(),valor:num(c.valor),categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,descricao:(c.descricao||"Conta")+" (conta paga)",status:"confirmado",origem:"conta",loja:c.loja||lojaPadrao(),criadoEm:Date.now()});
   DB.update("contas/"+id,{status:"paga",pagoEm:Date.now()});
-  // recorrência mensal: cria a próxima do mês seguinte
-  if(c.recorrencia==="mensal"){
-    const prox=proximoMesISO(c.vencimento);
-    DB.push("contas",{descricao:c.descricao,valor:num(c.valor),vencimento:prox,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,loja:c.loja||lojaPadrao(),recorrencia:"mensal",status:"aberta",criadoEm:Date.now()});
+  // recorrência: cria a próxima conta no intervalo configurado
+  const prox=proximaDataRec(c.vencimento, c.recorrencia);
+  if(prox){
+    DB.push("contas",{descricao:c.descricao,valor:num(c.valor),vencimento:prox,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,loja:c.loja||lojaPadrao(),recorrencia:c.recorrencia,status:"aberta",criadoEm:Date.now()});
   }
   toast("Conta paga e lançada no caixa.");
 }
+function proximaDataRec(iso, rec){
+  if(rec==="semanal") return maisDias(iso||hojeISO(),7);
+  if(rec==="quinzenal") return maisDias(iso||hojeISO(),15);
+  if(rec==="mensal") return proximoMesISO(iso);
+  return null;
+}
+function recLabel(rec){ return rec==="semanal"?"semanal":rec==="quinzenal"?"15 em 15 dias":rec==="mensal"?"mensal":""; }
 let contaEditId=null;
 function editarContaInicio(id){ contaEditId=id; render(); }
 function linhaEdicaoConta(c){
@@ -1071,7 +1078,7 @@ function linhaEdicaoConta(c){
     <div class="row" style="margin-top:10px">
       <div><label class="f">Categoria</label><select id="ec_cat_${c._id}">${optCategorias(c.categoria)}</select></div>
       <div><label class="f">Fornecedor</label><input id="ec_forn_${c._id}" value="${esc(c.fornecedor||'')}"></div>
-      <div><label class="f">Repetir</label><select id="ec_rec_${c._id}"><option value="nenhuma"${c.recorrencia!=='mensal'?' selected':''}>Não repete</option><option value="mensal"${c.recorrencia==='mensal'?' selected':''}>Todo mês</option></select></div>
+      <div><label class="f">Repetir</label><select id="ec_rec_${c._id}"><option value="nenhuma"${(!c.recorrencia||c.recorrencia==='nenhuma')?' selected':''}>Não repete</option><option value="semanal"${c.recorrencia==='semanal'?' selected':''}>Toda semana</option><option value="quinzenal"${c.recorrencia==='quinzenal'?' selected':''}>A cada 15 dias</option><option value="mensal"${c.recorrencia==='mensal'?' selected':''}>Todo mês</option></select></div>
     </div>
     <div style="margin-top:10px;display:flex;gap:8px">
       <button class="btn sm" onclick="salvarEdicaoConta('${c._id}')">Salvar</button>
