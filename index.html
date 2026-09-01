@@ -332,7 +332,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, assinaturas:{}, assinPagtos:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -565,6 +565,7 @@ const PAGINAS = [
   {id:"saidas",icon:"📤",label:"Saídas",grupo:"FINANCEIRO",render:renderSaidas},
   {id:"contas",icon:"🧾",label:"Contas a pagar",grupo:"FINANCEIRO",render:renderContas},
   {id:"receber",icon:"💰",label:"Contas a receber",grupo:"FINANCEIRO",render:renderReceber},
+  {id:"assinaturas",icon:"🔁",label:"Assinaturas",grupo:"FINANCEIRO",render:renderAssinaturas},
   {id:"fluxo",icon:"📈",label:"Fluxo de caixa",grupo:"FINANCEIRO",render:renderFluxo},
   {id:"calendario",icon:"📅",label:"Calendário",grupo:"FINANCEIRO",render:renderCalendario},
   {id:"dre",icon:"📑",label:"DRE (resultado)",grupo:"FINANCEIRO",render:renderDRE},
@@ -689,6 +690,121 @@ function trendChip(a,b,melhorSobe){
   return `<span class="trend ${cls}">${ar} ${Math.abs(v).toFixed(1).replace('.',',')}% <span style="font-weight:500;opacity:.75">vs ${lbl}</span></span>`;
 }
 function ymLocal(ts){ if(!ts) return ""; const d=new Date(ts); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+
+/* ===================== ASSINATURAS (SaaS Audens Control) =================
+   Módulo independente: vender o sistema por mensalidade. Só controle/registro
+   (não cobra de verdade). NÃO mexe em Entradas/DRE das lojas — receita própria. */
+let abaAssin="cobrancas", assinEditId=null;
+function assinAtivas(){ return obj2arr(STATE.assinaturas).filter(a=>a.status!=="cancelada"); }
+function mrrAtivo(){ return obj2arr(STATE.assinaturas).filter(a=>a.status==="ativa").reduce((s,a)=>s+num(a.valor),0); }
+function pagoAssinMes(id,ym){ return STATE.assinPagtos && STATE.assinPagtos[id+"_"+ym]; }
+function recebidoAssinMes(ym){ return obj2arr(STATE.assinPagtos).filter(p=>p.ym===ym).reduce((s,p)=>s+num(p.valor),0); }
+function statusAssinBadge(s){ return s==="ativa"?'<span class="badge b-green">ativa</span>':s==="pausada"?'<span class="badge b-gold">pausada</span>':'<span class="badge b-gray">cancelada</span>'; }
+function renderAssinaturas(el){
+  const ym=mesRef;
+  document.getElementById("pgSub").textContent="Assinaturas do Audens Control — controle da receita recorrente (SaaS). Separado das finanças das lojas.";
+  const ativos=obj2arr(STATE.assinaturas).filter(a=>a.status==="ativa");
+  const mrr=mrrAtivo();
+  const receb=recebidoAssinMes(ym);
+  const previstoMes=ativos.reduce((s,a)=>s+num(a.valor),0);
+  const aberto=Math.max(0,previstoMes-receb);
+  const abas=[["cobrancas","Cobranças do mês"],["assinantes","Assinantes"]];
+  el.innerHTML=`
+  <div class="grid g4" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">MRR (receita recorrente)</div><div class="val pos">${reais(mrr)}</div><div class="hint">${ativos.length} assinante(s) ativo(s)</div></div>
+    <div class="stat"><div class="lbl">Previsto em ${fmtMesLabel(ym)}</div><div class="val">${reais(previstoMes)}</div></div>
+    <div class="stat"><div class="lbl">Recebido no mês</div><div class="val pos">${reais(receb)}</div></div>
+    <div class="stat"><div class="lbl">Em aberto no mês</div><div class="val ${aberto>0?'neg':''}">${reais(aberto)}</div></div>
+  </div>
+  <div class="tabs">${abas.map(([id,l])=>`<button class="${id===abaAssin?'active':''}" onclick="abaAssin='${id}';render()">${l}</button>`).join("")}</div>
+  <div id="assinConteudo"></div>`;
+  const c=document.getElementById("assinConteudo");
+  if(abaAssin==="assinantes") return assinAbaAssinantes(c);
+  return assinAbaCobrancas(c, ym);
+}
+function assinAbaCobrancas(c, ym){
+  const ativos=obj2arr(STATE.assinaturas).filter(a=>a.status==="ativa").sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  c.innerHTML=`<div class="card" style="margin-top:14px"><div class="hd"><h3>Cobranças de ${fmtMesLabel(ym)}</h3><p>Marque quem já pagou a mensalidade deste mês. Use o seletor de mês no topo para trocar a competência.</p></div><div class="bd">
+    ${ativos.length? `<table><thead><tr><th>Assinante</th><th>Plano</th><th class="r">Dia</th><th class="r">Valor</th><th>Status do mês</th><th></th></tr></thead><tbody>${
+      ativos.map(a=>{ const pg=pagoAssinMes(a._id,ym); return `<tr>
+        <td><b>${esc(a.nome||"—")}</b>${a.contato?`<br><span class="small muted">${esc(a.contato)}</span>`:''}</td>
+        <td class="muted">${esc(a.plano||"—")}</td>
+        <td class="r">${a.diaCobranca||"—"}</td>
+        <td class="r"><b>${reais(a.valor)}</b></td>
+        <td>${pg? `<span class="badge b-green">pago ${pg.pagoEm?fmtData(new Date(pg.pagoEm).toISOString().slice(0,10)):''}</span>` : '<span class="badge b-gray">pendente</span>'}</td>
+        <td class="r" style="white-space:nowrap">${pg? `<button class="btn ghost sm" onclick="desmarcarAssinPago('${a._id}','${ym}')">desfazer</button>` : `<button class="btn sm" onclick="marcarAssinPago('${a._id}','${ym}')">Marcar recebido</button>`}</td>
+      </tr>`;}).join("")
+    }</tbody></table>`:`<div class="empty">Nenhum assinante ativo. Cadastre em "Assinantes".</div>`}
+  </div></div>`;
+}
+function assinAbaAssinantes(c){
+  const lista=obj2arr(STATE.assinaturas).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  c.innerHTML=`
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Novo assinante</h3></div><div class="bd">
+    <div class="row">
+      <div style="flex:2"><label class="f">Nome do estabelecimento</label><input id="as_nome" placeholder="Ex.: Hamburgueria do João"></div>
+      <div style="flex:1"><label class="f">Contato (opcional)</label><input id="as_contato" placeholder="WhatsApp / e-mail"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Plano</label><input id="as_plano" placeholder="Ex.: Pro"></div>
+      <div><label class="f">Mensalidade (R$)</label><input id="as_valor" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="f">Dia de cobrança</label><input id="as_dia" inputmode="numeric" placeholder="ex.: 10" value="10"></div>
+      <div><label class="f">Início</label><input type="date" id="as_inicio" value="${hojeISO()}"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="addAssinatura()">Adicionar assinante</button>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Assinantes (${lista.length})</h3></div><div class="bd">
+    ${lista.length? `<table><thead><tr><th>Assinante</th><th>Plano</th><th class="r">Mensalidade</th><th class="r">Dia</th><th>Status</th><th></th></tr></thead><tbody>${
+      lista.map(a=> a._id===assinEditId ? linhaEdicaoAssin(a) : `<tr>
+        <td><b>${esc(a.nome||"—")}</b>${a.contato?`<br><span class="small muted">${esc(a.contato)}</span>`:''}</td>
+        <td class="muted">${esc(a.plano||"—")}</td>
+        <td class="r"><b>${reais(a.valor)}</b></td>
+        <td class="r">${a.diaCobranca||"—"}</td>
+        <td>${statusAssinBadge(a.status)}</td>
+        <td class="r" style="white-space:nowrap">
+          ${a.status==="ativa"?`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','pausada')">pausar</button>`:a.status==="pausada"?`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','ativa')">reativar</button>`:`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','ativa')">reativar</button>`}
+          <button class="btn ghost sm" onclick="editarAssinInicio('${a._id}')">editar</button>
+          <button class="btn ghost sm" onclick="removerAssin('${a._id}')">excluir</button>
+        </td>
+      </tr>`).join("")
+    }</tbody></table>`:`<div class="empty">Nenhum assinante cadastrado ainda.</div>`}
+  </div></div>`;
+}
+function linhaEdicaoAssin(a){
+  return `<tr><td colspan="6" style="background:#f6f2fe">
+    <div class="row">
+      <div style="flex:2"><label class="f">Nome</label><input id="ea_nome_${a._id}" value="${esc(a.nome||'')}"></div>
+      <div style="flex:1"><label class="f">Contato</label><input id="ea_contato_${a._id}" value="${esc(a.contato||'')}"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Plano</label><input id="ea_plano_${a._id}" value="${esc(a.plano||'')}"></div>
+      <div><label class="f">Mensalidade (R$)</label><input id="ea_valor_${a._id}" inputmode="decimal" value="${a.valor!=null?String(a.valor).replace('.',','):''}"></div>
+      <div><label class="f">Dia de cobrança</label><input id="ea_dia_${a._id}" inputmode="numeric" value="${a.diaCobranca||''}"></div>
+      <div><label class="f">Status</label><select id="ea_status_${a._id}"><option value="ativa"${a.status==="ativa"?" selected":""}>Ativa</option><option value="pausada"${a.status==="pausada"?" selected":""}>Pausada</option><option value="cancelada"${a.status==="cancelada"?" selected":""}>Cancelada</option></select></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn sm" onclick="salvarEdicaoAssin('${a._id}')">Salvar</button>
+      <button class="btn ghost sm" onclick="assinEditId=null;render()">Cancelar</button>
+    </div>
+  </td></tr>`;
+}
+function addAssinatura(){
+  const nome=val("as_nome"); if(!nome) return toast("Informe o nome do assinante.");
+  const valor=num(val("as_valor")); if(valor<=0) return toast("Informe a mensalidade.");
+  DB.push("assinaturas",{ nome, contato:val("as_contato")||"", plano:val("as_plano")||"", valor, diaCobranca:Math.max(1,Math.min(28,Math.round(num(val("as_dia"))||10))), inicio:val("as_inicio")||hojeISO(), status:"ativa", criadoEm:Date.now() });
+  toast("Assinante adicionado.");
+}
+function editarAssinInicio(id){ assinEditId=id; render(); }
+function salvarEdicaoAssin(id){
+  const nome=val("ea_nome_"+id); if(!nome) return toast("Informe o nome.");
+  DB.update("assinaturas/"+id,{ nome, contato:val("ea_contato_"+id)||"", plano:val("ea_plano_"+id)||"", valor:num(val("ea_valor_"+id)), diaCobranca:Math.max(1,Math.min(28,Math.round(num(val("ea_dia_"+id))||10))), status:val("ea_status_"+id)||"ativa" });
+  assinEditId=null; toast("Assinante atualizado.");
+}
+function mudarStatusAssin(id,s){ DB.update("assinaturas/"+id,{status:s}); toast("Status atualizado."); }
+function removerAssin(id){ if(confirm("Excluir este assinante? (o histórico de pagamentos dele continua registrado)")){ DB.remove("assinaturas/"+id); } }
+function marcarAssinPago(id,ym){ const a=STATE.assinaturas[id]; if(!a) return; DB.set("assinPagtos/"+id+"_"+ym,{ assinId:id, ym, valor:num(a.valor), pagoEm:Date.now() }); toast("Recebimento registrado."); }
+function desmarcarAssinPago(id,ym){ DB.remove("assinPagtos/"+id+"_"+ym); toast("Recebimento desfeito."); }
+
 // Card da Visão financeira: parcelas de dívida pagas no mês (contas origem "divida").
 function cardDividasPagasMes(ym){
   const pagas = obj2arr(STATE.contas).filter(c=>c.origem==="divida" && c.status==="paga" && daLoja(c) && ymLocal(c.pagoEm)===ym).sort((a,b)=>(b.pagoEm||0)-(a.pagoEm||0));
@@ -3134,6 +3250,8 @@ function boot(){
   bind("estoqueCont","estoqueCont");
   bind("custoRev","custoRev");
   bind("colabPagto","colabPagto");
+  bind("assinaturas","assinaturas");
+  bind("assinPagtos","assinPagtos");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
