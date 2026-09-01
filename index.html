@@ -906,35 +906,43 @@ function desativarAcessoAssin(id){
   toast("Acesso desativado.");
 }
 /* ---- WhatsApp por cliente: liga a instância Z-API à base do cliente ------ */
+let wppEditInst=null;
 function renderWppClientes(el){
   if(!ehGestorRaiz()){ el.innerHTML=`<div class="card"><div class="bd"><div class="empty">Área exclusiva do gestor principal.</div></div></div>`; return; }
   document.getElementById("pgSub").textContent="Ligue o WhatsApp (Z-API) de cada cliente à base dele — uma instância (número) por cliente.";
   const assinTenant=obj2arr(STATE.assinaturas).filter(a=>a.tenant);
   const cfgs=obj2arr(STATE.wppConfig);
-  const optTenant = assinTenant.length? assinTenant.map(a=>`<option value="${a.tenant}">${esc(a.nome)} · ${esc(a.loginEmail||a.tenant)}</option>`).join("") : `<option value="">— nenhum cliente com acesso criado —</option>`;
+  const ed = wppEditInst ? (STATE.wppConfig[wppEditInst]||{}) : null;
+  const edInst = wppEditInst || "";
+  const edTenant = ed ? (ed.tenant||"") : "";
+  const edGN = ed ? ((ed.gruposNotas||[])[0]||"") : "";
+  const edGC = ed ? ((ed.gruposCaixa||[])[0]||"") : "";
+  const edLoja = ed ? ((ed.grupos||{})[edGN]||"") : "";
+  const optTenant = assinTenant.length? assinTenant.map(a=>`<option value="${a.tenant}"${a.tenant===edTenant?' selected':''}>${esc(a.nome)} · ${esc(a.loginEmail||a.tenant)}</option>`).join("") : `<option value="">— nenhum cliente com acesso criado —</option>`;
   el.innerHTML=`
   <div class="card" style="border-color:#e3d9f7"><div class="bd small">
     A base principal (Burguer/Pizza) continua pela configuração da própria função (não precisa registrar nada aqui). Aqui você liga o WhatsApp <b>dos clientes</b>.
   </div></div>
-  <div class="card" style="margin-top:14px"><div class="hd"><h3>Ligar WhatsApp de um cliente</h3><p>Crie a instância Z-API do número do cliente, conecte pelo QR, pegue o <b>Instance ID</b> e os <b>ids dos grupos</b>, e registre aqui.</p></div><div class="bd">
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>${ed?"Editar ligação":"Ligar WhatsApp de um cliente"}</h3><p>Crie a instância Z-API do número do cliente, conecte pelo QR, pegue o <b>Instance ID</b> e os <b>ids dos grupos</b>, e registre aqui.</p></div><div class="bd">
     <div class="row">
       <div style="flex:2"><label class="f">Cliente</label><select id="wp_tenant">${optTenant}</select></div>
-      <div style="flex:2"><label class="f">Instance ID (Z-API)</label><input id="wp_inst" placeholder="ex.: 3F70..."></div>
+      <div style="flex:2"><label class="f">Instance ID (Z-API)</label><input id="wp_inst" placeholder="ex.: 3F70..." value="${esc(edInst)}"></div>
     </div>
     <div class="row" style="margin-top:10px">
-      <div><label class="f">Grupo de NOTAS (id)</label><input id="wp_gnotas" placeholder="id do grupo de comprovantes"></div>
-      <div><label class="f">Loja das notas</label><select id="wp_loja"><option value="">— escolher no app —</option>${LOJAS.map(l=>`<option value="${l.id}">${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
-      <div><label class="f">Grupo de CAIXA (id)</label><input id="wp_gcaixa" placeholder="id do grupo de caixa"></div>
+      <div><label class="f">Grupo de NOTAS (id)</label><input id="wp_gnotas" placeholder="id do grupo de comprovantes" value="${esc(edGN)}"></div>
+      <div><label class="f">Loja das notas</label><select id="wp_loja"><option value="">— escolher no app —</option>${LOJAS.map(l=>`<option value="${l.id}"${l.id===edLoja?' selected':''}>${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+      <div><label class="f">Grupo de CAIXA (id)</label><input id="wp_gcaixa" placeholder="id do grupo de caixa" value="${esc(edGC)}"></div>
     </div>
     <div class="small muted" style="margin-top:6px">A <b>leitura</b> (comprovantes/caixa) já funciona só com isso. Para a função <b>responder</b> no WhatsApp do cliente, os tokens da instância dele vão na configuração da função — me passe quando ligar o cliente.</div>
-    <button class="btn" style="margin-top:12px" onclick="salvarWppConfig()">Salvar ligação</button>
+    <div style="margin-top:12px;display:flex;gap:8px"><button class="btn" onclick="salvarWppConfig()">${ed?"Salvar alterações":"Salvar ligação"}</button>${ed?`<button class="btn ghost" onclick="wppEditInst=null;render()">Cancelar</button>`:""}</div>
   </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Ligações ativas (${cfgs.length})</h3></div><div class="bd">
     ${cfgs.length?`<table><thead><tr><th>Instance ID</th><th>Cliente</th><th>Grupo notas</th><th>Grupo caixa</th><th></th></tr></thead><tbody>${
-      cfgs.map(c=>{const a=assinTenant.find(x=>x.tenant===c.tenant); return `<tr><td class="muted">${esc(c._id)}</td><td>${esc(a?a.nome:(c.tenant||"—"))}</td><td class="muted">${esc((c.gruposNotas||[]).join(", ")||"—")}</td><td class="muted">${esc((c.gruposCaixa||[]).join(", ")||"—")}</td><td class="r"><button class="btn ghost sm" onclick="removerWppConfig('${c._id}')">excluir</button></td></tr>`;}).join("")
+      cfgs.map(c=>{const a=assinTenant.find(x=>x.tenant===c.tenant); return `<tr><td class="muted">${esc(c._id)}</td><td>${esc(a?a.nome:(c.tenant||"—"))}</td><td class="muted">${esc((c.gruposNotas||[]).join(", ")||"—")}</td><td class="muted">${esc((c.gruposCaixa||[]).join(", ")||"—")}</td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="editarWppConfig('${c._id}')">editar</button> <button class="btn ghost sm" onclick="removerWppConfig('${c._id}')">excluir</button></td></tr>`;}).join("")
     }</tbody></table>`:`<div class="empty">Nenhuma ligação cadastrada ainda.</div>`}
   </div></div>`;
 }
+function editarWppConfig(inst){ wppEditInst=inst; render(); }
 function salvarWppConfig(){
   if(!ehGestorRaiz()) return;
   const inst=(val("wp_inst")||"").trim(); if(!inst) return toast("Informe o Instance ID.");
@@ -942,6 +950,7 @@ function salvarWppConfig(){
   const gn=(val("wp_gnotas")||"").trim(), gc=(val("wp_gcaixa")||"").trim(), loja=val("wp_loja")||"";
   const grupos={}; if(gn && loja) grupos[gn]=loja;
   DB.setGlobal("wppConfig/"+inst,{ tenant, gruposNotas: gn?[gn]:[], gruposCaixa: gc?[gc]:[], grupos, criadoEm:Date.now() });
+  wppEditInst=null;
   toast("Ligação de WhatsApp salva.");
 }
 function removerWppConfig(inst){ if(confirm("Excluir esta ligação de WhatsApp?")){ DB.setGlobal("wppConfig/"+inst,null); toast("Ligação removida."); } }
