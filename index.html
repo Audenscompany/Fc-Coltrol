@@ -311,28 +311,40 @@ const DB = (function(){
     if(!useFb) document.getElementById("modoDados").textContent = "modo local (sem Firebase)";
   }
 
+  // Multi-cliente: prefixo por tenant. Vazio ("") = base raiz (Burguer/Pizza de hoje, intacta).
+  let prefix = "";
+  const P = p => prefix + p;
   return {
     get useFb(){ return useFb; },
     init,
+    setPrefix(p){ prefix = p || ""; },
+    getPrefix(){ return prefix; },
     list(path, cb){
-      if(useFb){ db.ref(path).on("value", s=>cb(s.val()||{})); }
-      else { (subs[path]=subs[path]||[]).push(cb); cb(getLocal(path)||{}); }
+      const fp=P(path);
+      if(useFb){ db.ref(fp).on("value", s=>cb(s.val()||{})); }
+      else { (subs[fp]=subs[fp]||[]).push(cb); cb(getLocal(fp)||{}); }
     },
     push(path, obj){
-      if(useFb){ const ref=db.ref(path).push(); ref.set(obj); return ref.key; }
-      const id=uid(); setLocal(path+"/"+id, obj); emit(path); return id;
+      const fp=P(path);
+      if(useFb){ const ref=db.ref(fp).push(); ref.set(obj); return ref.key; }
+      const id=uid(); setLocal(fp+"/"+id, obj); emit(fp); return id;
     },
-    set(path, obj){ if(useFb){ db.ref(path).set(obj); } else { setLocal(path,obj); emit(path); emit(path.split("/").slice(0,-1).join("/")); } },
+    set(path, obj){ const fp=P(path); if(useFb){ db.ref(fp).set(obj); } else { setLocal(fp,obj); emit(fp); emit(fp.split("/").slice(0,-1).join("/")); } },
     update(path, obj){
-      if(useFb){ db.ref(path).update(obj); }
-      else { const cur=getLocal(path)||{}; setLocal(path, Object.assign({},cur,obj)); emit(path); emit(path.split("/").slice(0,-1).join("/")); }
+      const fp=P(path);
+      if(useFb){ db.ref(fp).update(obj); }
+      else { const cur=getLocal(fp)||{}; setLocal(fp, Object.assign({},cur,obj)); emit(fp); emit(fp.split("/").slice(0,-1).join("/")); }
     },
-    remove(path){ if(useFb){ db.ref(path).remove(); } else { delLocal(path); emit(path.split("/").slice(0,-1).join("/")); } }
+    remove(path){ const fp=P(path); if(useFb){ db.ref(fp).remove(); } else { delLocal(fp); emit(fp.split("/").slice(0,-1).join("/")); } },
+    // Acesso GLOBAL (sem prefixo) — usado só para o registro de tenants/logins.
+    listGlobal(path, cb){ if(useFb){ db.ref(path).on("value", s=>cb(s.val()||{})); } else { (subs[path]=subs[path]||[]).push(cb); cb(getLocal(path)||{}); } },
+    setGlobal(path, obj){ if(useFb){ db.ref(path).set(obj); } else { setLocal(path,obj); emit(path); } },
+    updateGlobal(path, obj){ if(useFb){ db.ref(path).update(obj); } else { const cur=getLocal(path)||{}; setLocal(path,Object.assign({},cur,obj)); emit(path); } }
   };
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, assinaturas:{}, assinPagtos:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -352,13 +364,25 @@ function fazerLogin(){
     SESSAO={nome:GESTOR.nome,email:GESTOR.email,perfil:"gestor"};
   } else {
     const u=obj2arr(STATE.usuarios).find(x=>(x.email||"").toLowerCase()===email && x.ativo!==false);
-    if(u && u.senhaHash===hashSenha(senha)) SESSAO={nome:u.nome||email,email:email,perfil:"usuario",permissoes:u.permissoes||[],loja:u.loja||"todos"};
-    else { err.textContent="E-mail ou senha incorretos."; return; }
+    if(u && u.senhaHash===hashSenha(senha)){ SESSAO={nome:u.nome||email,email:email,perfil:"usuario",permissoes:u.permissoes||[],loja:u.loja||"todos"}; }
+    else {
+      // Conta de CLIENTE (assinatura) — base própria (namespace t/<tenant>/).
+      const lg = STATE.logins && STATE.logins[emailKey(email)];
+      if(lg && lg.ativo!==false && lg.senhaHash===hashSenha(senha)){
+        SESSAO={nome:lg.nome||email,email:email,perfil:lg.perfil||"gestor",tenant:lg.tenant};
+        localStorage.setItem("fc_sessao",JSON.stringify(SESSAO));
+        location.reload(); return; // recarrega para ligar o banco no namespace do cliente
+      }
+      err.textContent="E-mail ou senha incorretos."; return;
+    }
   }
   localStorage.setItem("fc_sessao",JSON.stringify(SESSAO));
   entrarApp();
 }
-function logout(){ SESSAO=null; localStorage.removeItem("fc_sessao"); mostrarLogin(); }
+function emailKey(e){ return (e||"").toLowerCase().replace(/[.#$/\[\]]/g,"_"); }
+function tenantAtual(){ return (SESSAO && SESSAO.tenant) || ""; }
+function ehGestorRaiz(){ return ehGestor() && !tenantAtual(); } // só o dono do sistema cria clientes
+function logout(){ localStorage.removeItem("fc_sessao"); location.reload(); }
 function mostrarLogin(){ document.getElementById("login").style.display="flex"; document.querySelector(".app").style.display="none"; }
 function entrarApp(){
   document.getElementById("login").style.display="none";
@@ -750,7 +774,12 @@ function assinAbaCobrancas(c, ym){
 }
 function assinAbaAssinantes(c){
   const lista=obj2arr(STATE.assinaturas).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  const url=(location.href.split("#")[0]);
   c.innerHTML=`
+  ${ehGestorRaiz()? `<div class="card" style="margin-top:14px;border-color:#e3d9f7"><div class="bd small">
+    <b>Como vender:</b> ao criar um assinante com <b>e-mail + senha</b>, o sistema gera uma <b>base nova e zerada</b> (com 2 lojas, como o Burguer/Pizza, mas sem dados). O cliente acessa no <b>mesmo link</b> abaixo com o login dele e vê só a base dele. A sua base (Burguer/Pizza) não é afetada.<br>
+    <span class="muted">Link de acesso (o mesmo para todos): <b>${esc(url)}</b></span>
+  </div></div>`:""}
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Novo assinante</h3></div><div class="bd">
     <div class="row">
       <div style="flex:2"><label class="f">Nome do estabelecimento</label><input id="as_nome" placeholder="Ex.: Hamburgueria do João"></div>
@@ -762,18 +791,24 @@ function assinAbaAssinantes(c){
       <div><label class="f">Dia de cobrança</label><input id="as_dia" inputmode="numeric" placeholder="ex.: 10" value="10"></div>
       <div><label class="f">Início</label><input type="date" id="as_inicio" value="${hojeISO()}"></div>
     </div>
+    ${ehGestorRaiz()? `<div class="row" style="margin-top:10px;background:#f3effb;border:1px solid #e3d9f7;border-radius:10px;padding:10px">
+      <div style="flex:1 1 100%;font-size:12px;color:#5b2bb0;font-weight:700">Acesso do cliente (opcional) — cria uma BASE NOVA e ZERADA (2 lojas), separada da sua</div>
+      <div style="flex:1"><label class="f">E-mail de acesso</label><input id="as_email" type="email" placeholder="cliente@email.com"></div>
+      <div style="flex:1"><label class="f">Senha</label><input id="as_senha" type="text" placeholder="senha para o cliente"></div>
+    </div>`:""}
     <button class="btn" style="margin-top:12px" onclick="addAssinatura()">Adicionar assinante</button>
   </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Assinantes (${lista.length})</h3></div><div class="bd">
     ${lista.length? `<table><thead><tr><th>Assinante</th><th>Plano</th><th class="r">Mensalidade</th><th class="r">Dia</th><th>Status</th><th></th></tr></thead><tbody>${
       lista.map(a=> a._id===assinEditId ? linhaEdicaoAssin(a) : `<tr>
-        <td><b>${esc(a.nome||"—")}</b>${a.contato?`<br><span class="small muted">${esc(a.contato)}</span>`:''}</td>
+        <td><b>${esc(a.nome||"—")}</b>${a.contato?`<br><span class="small muted">${esc(a.contato)}</span>`:''}${a.tenant?`<br><span class="badge b-green" title="Base própria do cliente">🔑 ${esc(a.loginEmail||"acesso")}</span>`:''}</td>
         <td class="muted">${esc(a.plano||"—")}</td>
         <td class="r"><b>${reais(a.valor)}</b></td>
         <td class="r">${a.diaCobranca||"—"}</td>
         <td>${statusAssinBadge(a.status)}</td>
         <td class="r" style="white-space:nowrap">
-          ${a.status==="ativa"?`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','pausada')">pausar</button>`:a.status==="pausada"?`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','ativa')">reativar</button>`:`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','ativa')">reativar</button>`}
+          ${ehGestorRaiz()? (a.tenant? `<button class="btn ghost sm" onclick="desativarAcessoAssin('${a._id}')">desativar acesso</button>` : `<button class="btn sm" onclick="criarAcessoAssin('${a._id}')">criar acesso</button>`) : ""}
+          ${a.status==="ativa"?`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','pausada')">pausar</button>`:`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','ativa')">reativar</button>`}
           <button class="btn ghost sm" onclick="editarAssinInicio('${a._id}')">editar</button>
           <button class="btn ghost sm" onclick="removerAssin('${a._id}')">excluir</button>
         </td>
@@ -802,8 +837,16 @@ function linhaEdicaoAssin(a){
 function addAssinatura(){
   const nome=val("as_nome"); if(!nome) return toast("Informe o nome do assinante.");
   const valor=num(val("as_valor")); if(valor<=0) return toast("Informe a mensalidade.");
-  DB.push("assinaturas",{ nome, contato:val("as_contato")||"", plano:val("as_plano")||"", valor, diaCobranca:Math.max(1,Math.min(28,Math.round(num(val("as_dia"))||10))), inicio:val("as_inicio")||hojeISO(), status:"ativa", criadoEm:Date.now() });
-  toast("Assinante adicionado.");
+  const base={ nome, contato:val("as_contato")||"", plano:val("as_plano")||"", valor, diaCobranca:Math.max(1,Math.min(28,Math.round(num(val("as_dia"))||10))), inicio:val("as_inicio")||hojeISO(), status:"ativa", criadoEm:Date.now() };
+  if(ehGestorRaiz()){
+    const email=(val("as_email")||"").trim(), senha=val("as_senha");
+    if(email || senha){
+      const prov=provisionarTenant(email,senha,nome); if(!prov) return; // erro já avisado
+      base.tenant=prov.tenant; base.loginEmail=prov.email;
+    }
+  }
+  DB.push("assinaturas",base);
+  toast(base.tenant? "Assinante criado com acesso (base nova zerada)." : "Assinante adicionado.");
 }
 function editarAssinInicio(id){ assinEditId=id; render(); }
 function salvarEdicaoAssin(id){
@@ -815,6 +858,34 @@ function mudarStatusAssin(id,s){ DB.update("assinaturas/"+id,{status:s}); toast(
 function removerAssin(id){ if(confirm("Excluir este assinante? (o histórico de pagamentos dele continua registrado)")){ DB.remove("assinaturas/"+id); } }
 function marcarAssinPago(id,ym){ const a=STATE.assinaturas[id]; if(!a) return; DB.set("assinPagtos/"+id+"_"+ym,{ assinId:id, ym, valor:num(a.valor), pagoEm:Date.now() }); toast("Recebimento registrado."); }
 function desmarcarAssinPago(id,ym){ DB.remove("assinPagtos/"+id+"_"+ym); toast("Recebimento desfeito."); }
+// Cria o ACESSO (login + base própria zerada) de um cliente. Só o gestor raiz.
+function provisionarTenant(email, senha, nome){
+  if(!ehGestorRaiz()){ toast("Só o gestor principal cria acessos."); return null; }
+  email=(email||"").trim().toLowerCase();
+  if(!email || !senha){ toast("Informe e-mail e senha de acesso."); return null; }
+  if(email===GESTOR.email){ toast("Esse e-mail é o do gestor principal."); return null; }
+  const ek=emailKey(email);
+  if(STATE.logins && STATE.logins[ek]){ toast("Já existe um acesso com esse e-mail."); return null; }
+  const tid="cli"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  DB.setGlobal("logins/"+ek, { tenant:tid, senhaHash:hashSenha(senha), nome:nome||email, email, perfil:"gestor", ativo:true, criadoEm:Date.now() });
+  DB.updateGlobal("tenants/"+tid, { nome:nome||email, email, criadoEm:Date.now(), ativo:true });
+  return { tenant:tid, email };
+}
+function criarAcessoAssin(id){
+  if(!ehGestorRaiz()) return toast("Só o gestor principal cria acessos.");
+  const a=STATE.assinaturas[id]; if(!a) return;
+  const email=(prompt("E-mail de acesso do cliente:", a.contato||"")||"").trim(); if(!email) return;
+  const senha=(prompt("Senha de acesso (anote e passe ao cliente):")||"").trim(); if(!senha) return;
+  const prov=provisionarTenant(email,senha,a.nome); if(!prov) return;
+  DB.update("assinaturas/"+id,{ tenant:prov.tenant, loginEmail:prov.email });
+  toast("Acesso criado. O cliente entra com esse e-mail e senha.");
+}
+function desativarAcessoAssin(id){
+  const a=STATE.assinaturas[id]; if(!a || !a.loginEmail) return;
+  if(!confirm("Desativar o acesso deste cliente? Ele não conseguirá mais entrar (os dados ficam guardados).")) return;
+  DB.updateGlobal("logins/"+emailKey(a.loginEmail),{ ativo:false });
+  toast("Acesso desativado.");
+}
 
 // Card da Visão financeira: parcelas de dívida pagas no mês (contas origem "divida").
 function cardDividasPagasMes(ym){
@@ -2305,6 +2376,7 @@ const DIVIDAS_SEED = [
 // Detalhe por competência (aba "Detalhe Receita (SIEF)"): [loja,tributo,periodo,venc,original,saldo,consolidado]
 const DIVIDASDET_SEED = [["burguer","1082-01 - CP-SEGUR.","08/2024","20/09/2024",599.6,537.56,772.84],["burguer","1082-01 - CP-SEGUR.","09/2024","18/10/2024",709.46,647.42,924.77],["burguer","1082-01 - CP-SEGUR.","10/2024","19/11/2024",700.05,638.01,906.29],["burguer","1082-01 - CP-SEGUR.","11/2024","20/12/2024",848.21,848.21,1196.99],["burguer","1082-01 - CP-SEGUR.","12/2024","20/01/2025",598.03,598.03,837.89],["burguer","1082-01 - CP-SEGUR.","01/2025","20/02/2025",686.93,621.93,865.22],["burguer","1082-01 - CP-SEGUR.","02/2025","20/03/2025",938.13,938.13,1296.11],["burguer","1082-01 - CP-SEGUR.","10/2025","19/11/2025",780.47,780.47,1005.78],["burguer","1082-01 - CP-SEGUR.","11/2025","19/12/2025",877.09,877.09,1119.59],["burguer","1082-01 - CP-SEGUR.","12/2025","20/01/2026",858.0,857.97,1085.24],["burguer","1082-01 - CP-SEGUR.","01/2026","20/02/2026",830.35,830.35,1042.0],["burguer","1082-01 - CP-SEGUR.","02/2026","20/03/2026",802.25,802.25,997.03],["burguer","1082-01 - CP-SEGUR.","03/2026","20/04/2026",880.19,880.19,1084.29],["burguer","1082-21 - CP-SEGUR.","2024","20/12/2024",320.1,320.1,451.72],["burguer","1099-01 - CP-SEGUR.","08/2024","20/09/2024",155.32,155.32,223.29],["burguer","1099-01 - CP-SEGUR.","09/2024","18/10/2024",155.32,155.32,221.85],["burguer","1099-01 - CP-SEGUR.","10/2024","19/11/2024",155.32,155.32,220.62],["burguer","1099-01 - CP-SEGUR.","11/2024","20/12/2024",155.32,155.32,219.18],["burguer","1099-01 - CP-SEGUR.","12/2024","20/01/2025",155.32,155.32,217.61],["burguer","1099-01 - CP-SEGUR.","01/2025","20/02/2025",166.98,166.98,232.29],["burguer","1099-01 - CP-SEGUR.","02/2025","20/03/2025",166.98,166.98,230.69],["burguer","1099-01 - CP-SEGUR.","10/2025","19/11/2025",166.98,166.98,215.18],["burguer","1099-01 - CP-SEGUR.","11/2025","19/12/2025",166.98,166.98,213.14],["burguer","1099-01 - CP-SEGUR.","12/2025","20/01/2026",166.98,166.98,211.2],["burguer","1099-01 - CP-SEGUR.","01/2026","20/02/2026",178.31,178.31,223.75],["burguer","1099-01 - CP-SEGUR.","02/2026","20/03/2026",178.31,178.31,221.6],["burguer","1099-01 - CP-SEGUR.","03/2026","20/04/2026",178.31,178.31,219.65],["burguer","1138-01 - CP-PATRONAL","01/2026","20/02/2026",2115.51,2115.51,2654.75],["burguer","1138-01 - CP-PATRONAL","02/2026","20/03/2026",2053.01,2053.01,2551.47],["burguer","1138-01 - CP-PATRONAL","03/2026","20/04/2026",2243.55,2243.55,2763.82],["burguer","1138-04 - CP-PATRONAL","01/2026","20/02/2026",324.2,324.2,406.83],["burguer","1138-04 - CP-PATRONAL","02/2026","20/03/2026",324.2,324.2,402.91],["burguer","1138-04 - CP-PATRONAL","03/2026","20/04/2026",324.2,324.2,399.38],["burguer","1646-01 - CP-PATRONAL","01/2026","20/02/2026",158.66,158.66,199.1],["burguer","1646-01 - CP-PATRONAL","02/2026","20/03/2026",153.97,153.97,191.34],["burguer","1646-01 - CP-PATRONAL","03/2026","20/04/2026",168.26,168.26,207.27],["burguer","1170-01 - CP-TERCEIROS","01/2026","20/02/2026",264.43,264.43,331.82],["burguer","1170-01 - CP-TERCEIROS","02/2026","20/03/2026",256.62,256.62,318.92],["burguer","1170-01 - CP-TERCEIROS","03/2026","20/04/2026",280.44,280.44,345.46],["burguer","1176-01 - CP-TERCEIROS","01/2026","20/02/2026",21.15,21.15,26.54],["burguer","1176-01 - CP-TERCEIROS","02/2026","20/03/2026",20.53,20.53,25.5],["burguer","1176-01 - CP-TERCEIROS","03/2026","20/04/2026",22.43,22.43,27.62],["burguer","1200-01 - CP-TERCEIROS","01/2026","20/02/2026",63.46,63.46,79.63],["burguer","1200-01 - CP-TERCEIROS","02/2026","20/03/2026",61.59,61.59,76.53],["burguer","1200-01 - CP-TERCEIROS","03/2026","20/04/2026",67.3,67.3,82.9],["burguer","1225-01 - CP-TERCEIROS","01/2026","20/02/2026",264.43,264.43,331.82],["burguer","1225-01 - CP-TERCEIROS","02/2026","20/03/2026",256.62,256.62,318.92],["burguer","1225-01 - CP-TERCEIROS","03/2026","20/04/2026",280.44,280.44,345.46],["burguer","SIMPLES NAC.","04/2023","22/05/2023",5689.14,4843.96,7680.58],["burguer","SIMPLES NAC.","05/2023","20/06/2023",4814.02,4814.02,7581.59],["burguer","SIMPLES NAC.","06/2023","20/07/2023",4864.51,4864.51,7609.06],["burguer","SIMPLES NAC.","12/2023","22/01/2024",8234.0,8234.0,12394.64],["burguer","SIMPLES NAC.","01/2024","20/02/2024",8991.49,8991.49,13462.94],["burguer","SIMPLES NAC.","02/2024","20/03/2024",6640.29,6640.29,9887.38],["burguer","SIMPLES NAC.","03/2024","22/04/2024",7663.15,7663.15,11342.22],["burguer","SIMPLES NAC.","04/2024","20/05/2024",6515.25,6515.25,9589.14],["burguer","SIMPLES NAC.","05/2024","20/06/2024",7096.31,7096.31,10388.28],["burguer","SIMPLES NAC.","06/2024","22/07/2024",7466.5,7466.5,10862.26],["burguer","SIMPLES NAC.","07/2024","20/08/2024",6996.25,6996.25,10117.27],["burguer","SIMPLES NAC.","10/2024","21/11/2024",7825.78,7825.78,11116.51],["burguer","SIMPLES NAC.","11/2024","20/12/2024",6850.01,6850.01,9666.73],["burguer","SIMPLES NAC.","12/2024","20/01/2025",8939.53,8939.53,12525.16],["burguer","SIMPLES NAC.","01/2025","20/02/2025",9455.22,9455.22,13154.09],["burguer","SIMPLES NAC.","02/2025","20/03/2025",6926.33,6926.33,9569.41],["burguer","SIMPLES NAC.","03/2025","22/04/2025",10468.75,10468.75,14352.65],["burguer","SIMPLES NAC.","04/2025","28/05/2025",10548.16,10548.16,14341.27],["pizza","1082-01 - CP-SEGUR.","01/2026","20/02/2026",331.98,331.98,416.59],["pizza","1082-01 - CP-SEGUR.","02/2026","20/03/2026",330.54,330.54,410.78],["pizza","1082-01 - CP-SEGUR.","03/2026","20/04/2026",331.86,331.86,408.81],["pizza","1082-01 - CP-SEGUR.","06/2026","20/07/2026",343.84,343.84,354.05],["pizza","1138-01 - CP-PATRONAL","01/2026","20/02/2026",845.83,845.83,1061.42],["pizza","1138-01 - CP-PATRONAL","02/2026","20/03/2026",842.63,842.63,1047.21],["pizza","1138-01 - CP-PATRONAL","03/2026","20/04/2026",845.58,845.58,1041.66],["pizza","1138-01 - CP-PATRONAL","06/2026","20/07/2026",872.19,872.19,898.09],["pizza","1646-01 - CP-PATRONAL","01/2026","20/02/2026",84.58,84.58,106.13],["pizza","1646-01 - CP-PATRONAL","02/2026","20/03/2026",84.26,84.26,104.71],["pizza","1646-01 - CP-PATRONAL","03/2026","20/04/2026",84.55,84.55,104.15],["pizza","1646-01 - CP-PATRONAL","06/2026","20/07/2026",87.21,87.21,89.8],["pizza","1170-01 - CP-TERCEIROS","01/2026","20/02/2026",105.72,105.72,132.66],["pizza","1170-01 - CP-TERCEIROS","02/2026","20/03/2026",105.32,105.32,130.88],["pizza","1170-01 - CP-TERCEIROS","03/2026","20/04/2026",105.69,105.69,130.19],["pizza","1170-01 - CP-TERCEIROS","06/2026","20/07/2026",109.02,109.02,112.25],["pizza","1176-01 - CP-TERCEIROS","01/2026","20/02/2026",8.45,8.45,10.6],["pizza","1176-01 - CP-TERCEIROS","02/2026","20/03/2026",8.42,8.42,10.46],["pizza","1176-01 - CP-TERCEIROS","03/2026","20/04/2026",8.45,8.45,10.4],["pizza","1176-01 - CP-TERCEIROS","06/2026","20/07/2026",8.72,8.72,8.97],["pizza","1200-01 - CP-TERCEIROS","01/2026","20/02/2026",25.37,25.37,31.83],["pizza","1200-01 - CP-TERCEIROS","02/2026","20/03/2026",25.27,25.27,31.4],["pizza","1200-01 - CP-TERCEIROS","03/2026","20/04/2026",25.36,25.36,31.23],["pizza","1200-01 - CP-TERCEIROS","06/2026","20/07/2026",26.16,26.16,26.93],["pizza","1225-01 - CP-TERCEIROS","01/2026","20/02/2026",105.72,105.72,132.66],["pizza","1225-01 - CP-TERCEIROS","02/2026","20/03/2026",105.32,105.32,130.88],["pizza","1225-01 - CP-TERCEIROS","03/2026","20/04/2026",105.69,105.69,130.19],["pizza","1225-01 - CP-TERCEIROS","06/2026","20/07/2026",109.02,109.02,112.25]];
 function importarDividas(){
+  if(tenantAtual()) return toast("A importação de dívidas é específica da base principal.");
   if(Object.keys(STATE.dividas||{}).length && !confirm("Já existem dívidas cadastradas. Reimportar vai SOBRESCREVER os dados da planilha (o status que você alterou volta ao original). Continuar?")) return;
   DIVIDAS_SEED.forEach((d,i)=>DB.set("dividas/seed_"+i,{loja:d.loja,cnpj:CNPJ_LOJA[d.loja]||"",categoria:d.categoria,detalhe:d.detalhe,valor:d.valor,onde:d.onde,prazo:d.prazo,status:d.status,origem:"planilha",criadoEm:Date.now()}));
   DIVIDASDET_SEED.forEach((r,i)=>DB.set("dividasDet/seed_"+i,{loja:r[0],tributo:r[1],periodo:r[2],venc:r[3],original:r[4],saldo:r[5],consolidado:r[6]}));
@@ -3273,6 +3345,11 @@ function limparFirebase(){ localStorage.removeItem("fc_firebase_cfg"); toast("Mo
 /* ----------------------------- Boot ---------------------------------------- */
 function boot(){
   DB.init();
+  // Multi-cliente: liga o banco no namespace do cliente logado (vazio = base raiz Burguer/Pizza).
+  DB.setPrefix(SESSAO && SESSAO.tenant ? "t/"+SESSAO.tenant+"/" : "");
+  // Registro GLOBAL de acessos e clientes (fora do namespace) — usado no login e na gestão.
+  DB.listGlobal("logins", v=>{ STATE.logins=v||{}; });
+  DB.listGlobal("tenants", v=>{ STATE.tenants=v||{}; if(sessaoValida()) render(); });
   const bind = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; if(sessaoValida()) render(); });
   // Coleções de precificação: ao chegarem, rodam a migração por loja (idempotente).
   const bindPrec = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
