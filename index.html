@@ -3298,7 +3298,8 @@ function identidadeVisualHTML(){
       ${lojaLogo(l.id)?`<div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="removerLogo('${l.id}')">remover</button></div>`:""}
     </div>
     <div class="row" style="margin-top:6px">
-      <div style="flex:1"><label class="f">Token do Cardápio Web desta loja (API Key) — opcional</label><input id="cw_${l.id}" value="${esc(lojaCfg(l.id).cwApiKey||'')}" placeholder="cole aqui a API Key do Cardápio Web desta loja" onblur="salvarCwLoja('${l.id}',this.value)"></div>
+      <div style="flex:2"><label class="f">Token do Cardápio Web desta loja (API Key) — opcional</label><input id="cw_${l.id}" value="${esc(lojaCfg(l.id).cwApiKey||'')}" placeholder="cole aqui o TOKEN do Cardápio Web (Copiar token)" onblur="salvarCwLoja('${l.id}',this.value)"></div>
+      <div style="flex:1"><label class="f">Código da loja (Cardápio Web)</label><input id="cwcod_${l.id}" value="${esc(lojaCfg(l.id).cwStoreCode||'')}" placeholder="ex.: 10014" onblur="salvarCwCod('${l.id}',this.value)"></div>
     </div>`).join("")}
   </div></div>
   ${lojasCustomHTML()}`;
@@ -3378,6 +3379,9 @@ function salvarNomeLoja(id,nome){
 }
 function salvarCwLoja(id,v){
   salvarConfig({lojaPatch:{id, dados:{cwApiKey:(v||"").trim()||null}}}); toast("Token do Cardápio Web salvo.");
+}
+function salvarCwCod(id,v){
+  salvarConfig({lojaPatch:{id, dados:{cwStoreCode:(v||"").trim()||null}}}); toast("Código da loja salvo.");
 }
 // Salva config de forma OTIMISTA (atualiza STATE e a tela na hora) e persiste no Firebase.
 function salvarConfig(patch){
