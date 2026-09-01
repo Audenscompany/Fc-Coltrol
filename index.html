@@ -2703,14 +2703,15 @@ function pagamentoCiclo(ini, fim){
   const lista=obj2arr(STATE.colaboradores);
   const cb={}; lista.forEach(c=>{ cb[chaveColab(c.nome,lista)]=c; });
   const pg={};
-  const get=(nome,tipo)=>{ const k=chaveColab(nome,lista); if(!pg[k]){ const c=cb[k]; pg[k]={nome:(c?c.nome:String(nome).trim()),tipo,dias:0,diaria:0,taxa:0,moto:0,cadastrado:!!c,clt:c?!!c.clt:false}; } return pg[k]; };
+  const get=(nome,tipo)=>{ const k=chaveColab(nome,lista); if(!pg[k]){ const c=cb[k]; pg[k]={nome:(c?c.nome:String(nome).trim()),tipo,dias:0,diaria:0,taxa:0,moto:0,desc:0,cadastrado:!!c,clt:c?!!c.clt:false}; } return pg[k]; };
   dias.forEach(d=>{
     const salao=(d.salao||[]).map(n=>String(n).trim()).filter(Boolean);
     const nS=salao.length; const taxaPP=nS>0?num(d.taxaServico)/nS:0;
     salao.forEach(nome=>{ const p=get(nome,"salao"); const c=cb[chaveColab(nome,lista)]; p.dias++; if(!(c&&c.clt)) p.diaria+=(c?num(c.diaria):0); p.taxa+=taxaPP; });
     (d.motoboys||[]).forEach(m=>{ if(!m||!m.nome) return; const p=get(m.nome,"motoboy"); p.tipo="motoboy"; p.dias++; p.moto+=num(m.valor); });
+    (d.descontos||[]).forEach(x=>{ if(!x||!x.nome) return; const p=get(x.nome, "salao"); p.desc+=num(x.valor); });
   });
-  return Object.values(pg).map(p=>Object.assign(p,{total:p.diaria+p.taxa+p.moto})).sort((a,b)=>b.total-a.total);
+  return Object.values(pg).map(p=>Object.assign(p,{total:p.diaria+p.taxa+p.moto-p.desc})).sort((a,b)=>b.total-a.total);
 }
 function renderColaboradores(el){
   document.getElementById("pgSub").textContent="Pagamento de colaboradores por ciclo (quarta a terça) e cadastro.";
@@ -2742,8 +2743,9 @@ function dadosHistorico(ini,fim){
     let diarias=0; salao.forEach(nome=>{ const c=cb[chaveColab(nome,lista)]; if(!(c&&c.clt)) diarias+=(c?num(c.diaria):0); });
     const taxa=num(d.taxaServico);
     const moto=(d.motoboys||[]).reduce((s,m)=>s+num(m&&m.valor),0);
+    const desc=(d.descontos||[]).reduce((s,x)=>s+num(x&&x.valor),0);
     const salaoR=diarias+taxa;
-    return { data:d.data, nS:salao.length, nM:(d.motoboys||[]).filter(m=>m&&m.nome).length, diarias, taxa, salaoR, motoR:moto, total:salaoR+moto };
+    return { data:d.data, nS:salao.length, nM:(d.motoboys||[]).filter(m=>m&&m.nome).length, diarias, taxa, salaoR, motoR:moto, desc, total:salaoR+moto-desc };
   });
   const linhas=pagamentoCiclo(ini,fim);
   const totSalao=linhas.filter(p=>p.tipo==="salao").reduce((s,p)=>s+p.total,0);
@@ -2775,21 +2777,21 @@ function colabHistorico(c){
     <div class="stat"><div class="lbl">Dias lançados</div><div class="val">${d.perDay.length}</div></div>
   </div>
   <div class="card" style="margin-bottom:14px"><div class="hd"><h3>Total por colaborador</h3><p>Soma de tudo dentro do período selecionado.</p></div><div class="bd">
-    ${d.linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Total</th></tr></thead><tbody>${
-      d.linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
-    }<tr style="border-top:2px solid var(--ink)"><td colspan="6"><b>Total</b></td><td class="r"><b class="neg">${reais(d.totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste período.</div>`}
+    ${d.linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Desconto</th><th class="r">Total</th></tr></thead><tbody>${
+      d.linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('<span class="neg">-'+reais(p.desc)+'</span>'):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
+    }<tr style="border-top:2px solid var(--ink)"><td colspan="7"><b>Total</b></td><td class="r"><b class="neg">${reais(d.totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste período.</div>`}
   </div></div>
   <div class="card"><div class="hd"><h3>Por dia</h3><p>Resumo de cada dia dentro do período.</p></div><div class="bd">
-    ${d.perDay.length?`<table><thead><tr><th>Data</th><th class="r">Salão</th><th class="r">Motoboys</th><th class="r">Diárias</th><th class="r">Taxa serv.</th><th class="r">Total moto</th><th class="r">Total dia</th></tr></thead><tbody>${
-      d.perDay.map(x=>`<tr><td><b>${fmtData(x.data)}</b></td><td class="r">${x.nS}</td><td class="r">${x.nM}</td><td class="r">${x.diarias?reais(x.diarias):"—"}</td><td class="r">${x.taxa?reais(x.taxa):"—"}</td><td class="r">${x.motoR?reais(x.motoR):"—"}</td><td class="r"><b>${reais(x.total)}</b></td></tr>`).join("")
+    ${d.perDay.length?`<table><thead><tr><th>Data</th><th class="r">Salão</th><th class="r">Motoboys</th><th class="r">Diárias</th><th class="r">Taxa serv.</th><th class="r">Total moto</th><th class="r">Desconto</th><th class="r">Total dia</th></tr></thead><tbody>${
+      d.perDay.map(x=>`<tr><td><b>${fmtData(x.data)}</b></td><td class="r">${x.nS}</td><td class="r">${x.nM}</td><td class="r">${x.diarias?reais(x.diarias):"—"}</td><td class="r">${x.taxa?reais(x.taxa):"—"}</td><td class="r">${x.motoR?reais(x.motoR):"—"}</td><td class="r">${x.desc?('<span class="neg">-'+reais(x.desc)+'</span>'):"—"}</td><td class="r"><b>${reais(x.total)}</b></td></tr>`).join("")
     }</tbody></table>`:`<div class="empty">Nenhum dia lançado neste período.</div>`}
   </div></div>`;
 }
 function baixarPdfColab(){
   histParams();
   const ini=histIni, fim=histFim, d=dadosHistorico(ini,fim);
-  const linhasTot=d.linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' (CLT)':''}</td><td>${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("");
-  const linhasDia=d.perDay.map(x=>`<tr><td>${fmtData(x.data)}</td><td class="r">${x.nS}</td><td class="r">${x.nM}</td><td class="r">${x.diarias?reais(x.diarias):"—"}</td><td class="r">${x.taxa?reais(x.taxa):"—"}</td><td class="r">${x.motoR?reais(x.motoR):"—"}</td><td class="r"><b>${reais(x.total)}</b></td></tr>`).join("");
+  const linhasTot=d.linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' (CLT)':''}</td><td>${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('-'+reais(p.desc)):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("");
+  const linhasDia=d.perDay.map(x=>`<tr><td>${fmtData(x.data)}</td><td class="r">${x.nS}</td><td class="r">${x.nM}</td><td class="r">${x.diarias?reais(x.diarias):"—"}</td><td class="r">${x.taxa?reais(x.taxa):"—"}</td><td class="r">${x.motoR?reais(x.motoR):"—"}</td><td class="r">${x.desc?('-'+reais(x.desc)):"—"}</td><td class="r"><b>${reais(x.total)}</b></td></tr>`).join("");
   const doc=`<!doctype html><html><head><meta charset="utf-8"><title>Relatório de Colaboradores</title>
   <style>
     *{font-family:Arial,Helvetica,sans-serif;box-sizing:border-box}
@@ -2814,12 +2816,12 @@ function baixarPdfColab(){
       <div class="card"><div class="l">Dias lançados</div><div class="v">${d.perDay.length}</div></div>
     </div>
     <h2>Total por colaborador</h2>
-    <table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Total</th></tr></thead>
-    <tbody>${linhasTot||'<tr><td colspan="7">Sem dados no período.</td></tr>'}</tbody>
-    ${d.linhas.length?`<tfoot><tr><td colspan="6">Total</td><td class="r">${reais(d.totalGeral)}</td></tr></tfoot>`:""}</table>
+    <table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Desconto</th><th class="r">Total</th></tr></thead>
+    <tbody>${linhasTot||'<tr><td colspan="8">Sem dados no período.</td></tr>'}</tbody>
+    ${d.linhas.length?`<tfoot><tr><td colspan="7">Total</td><td class="r">${reais(d.totalGeral)}</td></tr></tfoot>`:""}</table>
     <h2>Por dia</h2>
-    <table><thead><tr><th>Data</th><th class="r">Salão</th><th class="r">Motoboys</th><th class="r">Diárias</th><th class="r">Taxa serv.</th><th class="r">Total moto</th><th class="r">Total dia</th></tr></thead>
-    <tbody>${linhasDia||'<tr><td colspan="7">Sem dados no período.</td></tr>'}</tbody></table>
+    <table><thead><tr><th>Data</th><th class="r">Salão</th><th class="r">Motoboys</th><th class="r">Diárias</th><th class="r">Taxa serv.</th><th class="r">Total moto</th><th class="r">Desconto</th><th class="r">Total dia</th></tr></thead>
+    <tbody>${linhasDia||'<tr><td colspan="8">Sem dados no período.</td></tr>'}</tbody></table>
   </body></html>`;
   const win=window.open("","_blank");
   if(!win){ toast("Libere o pop-up para gerar o PDF."); return; }
@@ -2851,9 +2853,9 @@ function colabPagamentos(c){
   ${cardContaColab(ini, totalGeral)}
   ${naoCad?`<div class="alert amber" style="margin-bottom:12px"><div><div class="at">${naoCad} pessoa(s) do salão sem cadastro</div><div class="ad">Cadastre em "Cadastro" para definir a diária e marcar carteira assinada (sem cadastro, a diária fica R$ 0).</div></div><button class="btn ghost sm" onclick="abaColab='cadastro';render()">Cadastro</button></div>`:""}
   <div class="card"><div class="hd"><h3>A pagar no ciclo</h3><p>Salão/cozinha: diária (exceto CLT) + rateio da taxa de serviço. Motoboys: valor do dia.</p></div><div class="bd">
-    ${linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Total</th></tr></thead><tbody>${
-      linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}${(!p.cadastrado&&p.tipo==="salao")?' <span class="badge b-gold">cadastrar</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
-    }<tr style="border-top:2px solid var(--ink)"><td colspan="6"><b>Total do ciclo</b></td><td class="r"><b class="neg">${reais(totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste ciclo. Os dias entram automaticamente pelo grupo de caixa, ou você lança em "Dias lançados".</div>`}
+    ${linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Desconto</th><th class="r">Total</th></tr></thead><tbody>${
+      linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}${(!p.cadastrado&&p.tipo==="salao")?' <span class="badge b-gold">cadastrar</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('<span class="neg">-'+reais(p.desc)+'</span>'):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
+    }<tr style="border-top:2px solid var(--ink)"><td colspan="7"><b>Total do ciclo</b></td><td class="r"><b class="neg">${reais(totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste ciclo. Os dias entram automaticamente pelo grupo de caixa, ou você lança em "Dias lançados".</div>`}
   </div></div>`;
 }
 /* ----- Gera a conta a pagar do pagamento do ciclo (vira saída ao aprovar) - */
@@ -2931,8 +2933,10 @@ function salvarCLT(id,checked){ DB.update("colaboradores/"+id,{clt:!!checked}); 
 function salvarTipoColab(id,v){ DB.update("colaboradores/"+id,{tipo:v==="motoboy"?"motoboy":"salao"}); toast("Tipo atualizado."); }
 let colabDiaEdit=null;
 function motoResumo(d){ return (d.motoboys||[]).map(m=>esc(m.nome)+" "+reais(m.valor)).join(", ")||"—"; }
+function descResumo(d){ return (d.descontos||[]).map(x=>esc(x.nome)+" -"+reais(x.valor)).join(", ")||"—"; }
 function formColabDia(d){
   const motoTxt=(d.motoboys||[]).map(m=>`${m.nome}: ${m.valor}`).join("\n");
+  const descTxt=(d.descontos||[]).map(x=>`${x.nome}: ${x.valor}`).join("\n");
   return `<div style="border:1px solid #e3d9f7;border-radius:10px;padding:12px;margin-bottom:8px;background:#f6f2fe">
     <div class="row">
       <div><label class="f">Data</label><input type="date" id="cde_data_${d._id}" value="${(d.data||"").slice(0,10)}"></div>
@@ -2940,6 +2944,7 @@ function formColabDia(d){
     </div>
     <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Salão/Cozinha (vírgula)</label><input id="cde_salao_${d._id}" value="${esc((d.salao||[]).join(", "))}"></div></div>
     <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Motoboys (Nome: valor por linha)</label><textarea id="cde_moto_${d._id}" rows="3">${esc(motoTxt)}</textarea></div></div>
+    <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Descontos (Nome: valor por linha)</label><textarea id="cde_desc_${d._id}" rows="2" placeholder="Matheus Henrique: 8,45">${esc(descTxt)}</textarea></div></div>
     <div style="margin-top:10px;display:flex;gap:8px">
       <button class="btn sm" onclick="salvarColabDia('${d._id}',${d.status==='pendente'?'true':'false'})">${d.status==='pendente'?'Salvar e aprovar':'Salvar'}</button>
       <button class="btn ghost sm" onclick="colabDiaEdit=null;render()">Cancelar</button>
@@ -2956,6 +2961,7 @@ function colabDiasView(c){
         <div><b>${fmtData(d.data)}</b> <span class="muted">· taxa ${reais(d.taxaServico)}</span></div>
         <div class="small muted">Salão/Cozinha: ${esc((d.salao||[]).join(", "))||"—"}</div>
         <div class="small muted">Motoboys: ${motoResumo(d)}</div>
+        ${(d.descontos||[]).length?`<div class="small muted">Descontos: ${descResumo(d)}</div>`:""}
       </div><div style="display:flex;gap:8px;align-items:center">
         <button class="btn sm" onclick="aprovarColabDia('${d._id}')">Aprovar</button>
         <button class="btn ghost sm" onclick="colabDiaEdit='${d._id}';render()">Editar</button>
@@ -2969,6 +2975,7 @@ function colabDiasView(c){
     </div>
     <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Salão/Cozinha (nomes separados por vírgula)</label><input id="cd_salao" placeholder="Diego, Maria, Silvana, ..."></div></div>
     <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Motoboys (um por linha: Nome: valor)</label><textarea id="cd_moto" rows="3" placeholder="Matheus: 185&#10;Maicon: 170"></textarea></div></div>
+    <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Descontos (um por linha: Nome: valor)</label><textarea id="cd_desc" rows="2" placeholder="Matheus Henrique: 8,45"></textarea></div></div>
     <button class="btn" style="margin-top:10px" onclick="addColabDia()">Salvar dia</button>
   </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Dias aprovados (${aprov.length})</h3></div><div class="bd">
@@ -2979,13 +2986,13 @@ function lerMotoTextarea(id){ const el=document.getElementById(id); const raw=((
 function addColabDia(){
   const data=val("cd_data")||hojeISO();
   const salao=(val("cd_salao")||"").split(",").map(s=>s.trim()).filter(Boolean);
-  DB.push("colabDias",{data,inicio:0,final:0,salao,taxaServico:num(val("cd_taxa")),motoboys:lerMotoTextarea("cd_moto"),status:"aprovado",origem:"manual",criadoEm:Date.now()});
+  DB.push("colabDias",{data,inicio:0,final:0,salao,taxaServico:num(val("cd_taxa")),motoboys:lerMotoTextarea("cd_moto"),descontos:lerMotoTextarea("cd_desc"),status:"aprovado",origem:"manual",criadoEm:Date.now()});
   toast("Dia lançado.");
 }
 function aprovarColabDia(id){ DB.update("colabDias/"+id,{status:"aprovado"}); toast("Dia aprovado — entrou no pagamento."); }
 function salvarColabDia(id,aprovar){
   const salao=(val("cde_salao_"+id)||"").split(",").map(s=>s.trim()).filter(Boolean);
-  const patch={ data:val("cde_data_"+id)||hojeISO(), taxaServico:num(val("cde_taxa_"+id)), salao, motoboys:lerMotoTextarea("cde_moto_"+id) };
+  const patch={ data:val("cde_data_"+id)||hojeISO(), taxaServico:num(val("cde_taxa_"+id)), salao, motoboys:lerMotoTextarea("cde_moto_"+id), descontos:lerMotoTextarea("cde_desc_"+id) };
   if(aprovar) patch.status="aprovado";
   DB.update("colabDias/"+id,patch); colabDiaEdit=null; toast(aprovar?"Dia aprovado.":"Dia atualizado.");
 }
