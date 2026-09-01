@@ -2006,12 +2006,16 @@ function renderEstabelecimentos(el){
 /* ===================== USUÁRIOS E ACESSOS (só gestor) =================== */
 function paginasPermissionaveis(){ return PAGINAS.filter(p=>!p.oculto && !p.soGestor); }
 function renderUsuarios(el){
-  document.getElementById("pgSub").textContent = "Crie acessos e escolha o que cada usuário pode ver.";
+  document.getElementById("pgSub").textContent = "Acessos da sua equipe nesta base — defina o que cada pessoa pode ver.";
   const usuarios = obj2arr(STATE.usuarios);
   const checks = paginasPermissionaveis().map(p=>`<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin:4px 12px 4px 0"><input type="checkbox" id="perm_${p.id}" style="width:auto"> ${esc(p.label)}</label>`).join("");
   el.innerHTML = `
+  <div class="card" style="border-color:#e3d9f7;margin-bottom:14px"><div class="bd small">
+    👥 Aqui ficam os acessos da <b>sua equipe</b> nesta base (financeiro, cozinha, etc.) — cada um com as áreas que pode enxergar.
+    ${ehGestorRaiz()? `<br>💡 <b>Não confunda com clientes que assinam o sistema.</b> Assinante = base própria e zerada, criada em <a class="linkmais" onclick="irPara('assinaturas')">Assinaturas</a> (com login e senha próprios). Esta tela é só para a equipe do Burguer/Pizza.` : ""}
+  </div></div>
   <div class="card"><div class="hd"><h3>Gestor (você)</h3></div><div class="bd small">
-    <b>${esc(GESTOR.email)}</b> — acesso total. (Para trocar a senha do gestor, me avise.)
+    <b>${esc((SESSAO&&SESSAO.email)||GESTOR.email)}</b> — acesso total.${ehGestorRaiz()?" (Para trocar a senha do gestor, me avise.)":""}
   </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Novo usuário</h3><p>Defina e-mail, senha e marque as áreas que ele pode acessar.</p></div><div class="bd">
     <div class="row">
