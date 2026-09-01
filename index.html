@@ -344,7 +344,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{}, wppConfig:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -614,6 +614,7 @@ const PAGINAS = [
   {id:"canais",icon:"📡",label:"Canais de venda",grupo:"CONFIGURAÇÕES",render:renderCanais},
   {id:"estabelecimentos",icon:"🏪",label:"Estabelecimentos",grupo:"CONFIGURAÇÕES",render:renderEstabelecimentos},
   {id:"usuarios",icon:"👥",label:"Usuários e acessos",grupo:"CONFIGURAÇÕES",soGestor:true,render:renderUsuarios},
+  {id:"wppclientes",icon:"💬",label:"WhatsApp (clientes)",grupo:"CONFIGURAÇÕES",soGestor:true,soRaiz:true,render:renderWppClientes},
   {id:"config",icon:"⚙️",label:"Configurações",grupo:"CONFIGURAÇÕES",render:renderConfig},
   {id:"tarefas",icon:"✅",label:"Tarefas",grupo:"",oculto:true,render:renderTarefas},
 ];
@@ -622,7 +623,7 @@ let paginaAtual = "dashboard";
 function montarNav(){
   let html="";
   for(const g of GRUPOS){
-    const itens = PAGINAS.filter(p=>p.grupo===g && !p.oculto && (!p.soGestor || ehGestor()) && temAcesso(p.id));
+    const itens = PAGINAS.filter(p=>p.grupo===g && !p.oculto && (!p.soGestor || ehGestor()) && (!p.soRaiz || ehGestorRaiz()) && temAcesso(p.id));
     if(!itens.length) continue;
     html += `<div class="grp">${g}</div>` + itens.map(p=>
       `<a data-id="${p.id}" class="${p.id===paginaAtual?'active':''}" onclick="irPara('${p.id}')"><span class="ico">${p.icon}</span><span class="lbl">${p.label}</span></a>`
@@ -630,7 +631,7 @@ function montarNav(){
   }
   document.getElementById("nav").innerHTML = html;
 }
-function irPara(id){ const p=PAGINAS.find(x=>x.id===id); if(p && p.soGestor && !ehGestor()) return; if(!temAcesso(id)){ toast("Você não tem acesso a essa área."); return; } paginaAtual=id; montarNav(); render(); }
+function irPara(id){ const p=PAGINAS.find(x=>x.id===id); if(p && p.soGestor && !ehGestor()) return; if(p && p.soRaiz && !ehGestorRaiz()) return; if(!temAcesso(id)){ toast("Você não tem acesso a essa área."); return; } paginaAtual=id; montarNav(); render(); }
 let mesRef = mesAtual();
 function setMesRef(v){ if(v){ mesRef=v; render(); } }
 function toggleNovaMov(ev){ ev.stopPropagation(); const m=document.getElementById("novaMovMenu"); if(m) m.style.display = m.style.display==="none"?"block":"none"; }
@@ -886,6 +887,46 @@ function desativarAcessoAssin(id){
   DB.updateGlobal("logins/"+emailKey(a.loginEmail),{ ativo:false });
   toast("Acesso desativado.");
 }
+/* ---- WhatsApp por cliente: liga a instância Z-API à base do cliente ------ */
+function renderWppClientes(el){
+  if(!ehGestorRaiz()){ el.innerHTML=`<div class="card"><div class="bd"><div class="empty">Área exclusiva do gestor principal.</div></div></div>`; return; }
+  document.getElementById("pgSub").textContent="Ligue o WhatsApp (Z-API) de cada cliente à base dele — uma instância (número) por cliente.";
+  const assinTenant=obj2arr(STATE.assinaturas).filter(a=>a.tenant);
+  const cfgs=obj2arr(STATE.wppConfig);
+  const optTenant = assinTenant.length? assinTenant.map(a=>`<option value="${a.tenant}">${esc(a.nome)} · ${esc(a.loginEmail||a.tenant)}</option>`).join("") : `<option value="">— nenhum cliente com acesso criado —</option>`;
+  el.innerHTML=`
+  <div class="card" style="border-color:#e3d9f7"><div class="bd small">
+    A base principal (Burguer/Pizza) continua pela configuração da própria função (não precisa registrar nada aqui). Aqui você liga o WhatsApp <b>dos clientes</b>.
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Ligar WhatsApp de um cliente</h3><p>Crie a instância Z-API do número do cliente, conecte pelo QR, pegue o <b>Instance ID</b> e os <b>ids dos grupos</b>, e registre aqui.</p></div><div class="bd">
+    <div class="row">
+      <div style="flex:2"><label class="f">Cliente</label><select id="wp_tenant">${optTenant}</select></div>
+      <div style="flex:2"><label class="f">Instance ID (Z-API)</label><input id="wp_inst" placeholder="ex.: 3F70..."></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="f">Grupo de NOTAS (id)</label><input id="wp_gnotas" placeholder="id do grupo de comprovantes"></div>
+      <div><label class="f">Loja das notas</label><select id="wp_loja"><option value="">— escolher no app —</option>${LOJAS.map(l=>`<option value="${l.id}">${esc(lojaNome(l.id))}</option>`).join("")}</select></div>
+      <div><label class="f">Grupo de CAIXA (id)</label><input id="wp_gcaixa" placeholder="id do grupo de caixa"></div>
+    </div>
+    <div class="small muted" style="margin-top:6px">A <b>leitura</b> (comprovantes/caixa) já funciona só com isso. Para a função <b>responder</b> no WhatsApp do cliente, os tokens da instância dele vão na configuração da função — me passe quando ligar o cliente.</div>
+    <button class="btn" style="margin-top:12px" onclick="salvarWppConfig()">Salvar ligação</button>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Ligações ativas (${cfgs.length})</h3></div><div class="bd">
+    ${cfgs.length?`<table><thead><tr><th>Instance ID</th><th>Cliente</th><th>Grupo notas</th><th>Grupo caixa</th><th></th></tr></thead><tbody>${
+      cfgs.map(c=>{const a=assinTenant.find(x=>x.tenant===c.tenant); return `<tr><td class="muted">${esc(c._id)}</td><td>${esc(a?a.nome:(c.tenant||"—"))}</td><td class="muted">${esc((c.gruposNotas||[]).join(", ")||"—")}</td><td class="muted">${esc((c.gruposCaixa||[]).join(", ")||"—")}</td><td class="r"><button class="btn ghost sm" onclick="removerWppConfig('${c._id}')">excluir</button></td></tr>`;}).join("")
+    }</tbody></table>`:`<div class="empty">Nenhuma ligação cadastrada ainda.</div>`}
+  </div></div>`;
+}
+function salvarWppConfig(){
+  if(!ehGestorRaiz()) return;
+  const inst=(val("wp_inst")||"").trim(); if(!inst) return toast("Informe o Instance ID.");
+  const tenant=val("wp_tenant")||""; if(!tenant) return toast("Selecione o cliente (crie o acesso dele em Assinaturas antes).");
+  const gn=(val("wp_gnotas")||"").trim(), gc=(val("wp_gcaixa")||"").trim(), loja=val("wp_loja")||"";
+  const grupos={}; if(gn && loja) grupos[gn]=loja;
+  DB.setGlobal("wppConfig/"+inst,{ tenant, gruposNotas: gn?[gn]:[], gruposCaixa: gc?[gc]:[], grupos, criadoEm:Date.now() });
+  toast("Ligação de WhatsApp salva.");
+}
+function removerWppConfig(inst){ if(confirm("Excluir esta ligação de WhatsApp?")){ DB.setGlobal("wppConfig/"+inst,null); toast("Ligação removida."); } }
 
 // Card da Visão financeira: parcelas de dívida pagas no mês (contas origem "divida").
 function cardDividasPagasMes(ym){
@@ -3350,6 +3391,7 @@ function boot(){
   // Registro GLOBAL de acessos e clientes (fora do namespace) — usado no login e na gestão.
   DB.listGlobal("logins", v=>{ STATE.logins=v||{}; });
   DB.listGlobal("tenants", v=>{ STATE.tenants=v||{}; if(sessaoValida()) render(); });
+  DB.listGlobal("wppConfig", v=>{ STATE.wppConfig=v||{}; if(sessaoValida()) render(); });
   const bind = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; if(sessaoValida()) render(); });
   // Coleções de precificação: ao chegarem, rodam a migração por loja (idempotente).
   const bindPrec = (path, key) => DB.list(path, v=>{ STATE[key]=v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
