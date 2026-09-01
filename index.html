@@ -253,6 +253,7 @@
       </div>
       <div id="topRight"></div>
     </div>
+    <div id="suporteBanner"></div>
     <div class="content" id="content"></div>
   </main>
 </div>
@@ -382,7 +383,22 @@ function fazerLogin(){
 function emailKey(e){ return (e||"").toLowerCase().replace(/[.#$/\[\]]/g,"_"); }
 function tenantAtual(){ return (SESSAO && SESSAO.tenant) || ""; }
 function ehGestorRaiz(){ return ehGestor() && !tenantAtual(); } // só o dono do sistema cria clientes
-function logout(){ localStorage.removeItem("fc_sessao"); location.reload(); }
+function logout(){ localStorage.removeItem("fc_sessao"); localStorage.removeItem("fc_sessao_orig"); location.reload(); }
+// Modo suporte: o gestor principal entra na base de um cliente para configurar por ele.
+function entrarSuporte(tenant, nome){
+  if(!ehGestorRaiz()) return toast("Só o gestor principal pode entrar em bases de clientes.");
+  if(!tenant) return;
+  localStorage.setItem("fc_sessao_orig", localStorage.getItem("fc_sessao")||"");
+  const s=Object.assign({}, SESSAO, { tenant, suporte:true, suporteNome:nome||tenant });
+  localStorage.setItem("fc_sessao", JSON.stringify(s));
+  location.reload();
+}
+function sairSuporte(){
+  const orig=localStorage.getItem("fc_sessao_orig");
+  if(orig) localStorage.setItem("fc_sessao", orig); else localStorage.removeItem("fc_sessao");
+  localStorage.removeItem("fc_sessao_orig");
+  location.reload();
+}
 function mostrarLogin(){ document.getElementById("login").style.display="flex"; document.querySelector(".app").style.display="none"; }
 function entrarApp(){
   document.getElementById("login").style.display="none";
@@ -639,6 +655,8 @@ document.addEventListener("click",()=>{ const m=document.getElementById("novaMov
 function render(){
   if(!sessaoValida()) return;
   rebuildLojas();
+  const sb=document.getElementById("suporteBanner");
+  if(sb){ if(SESSAO&&SESSAO.suporte){ sb.innerHTML=`<div style="background:#f59e0b;color:#3a2a00;padding:8px 14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">🛟 Modo suporte — você está na base de <b>${esc(SESSAO.suporteNome||SESSAO.tenant)}</b>. Tudo que você mexer afeta o cliente. <button class="btn sm" onclick="sairSuporte()">Voltar para minha base</button></div>`; } else { sb.innerHTML=""; } }
   const pg = PAGINAS.find(p=>p.id===paginaAtual) || PAGINAS[0];
   document.getElementById("pgTitulo").textContent = pg.label;
   const comFiltro = ["dashboard","metas","alertas","vendas","rentabilidade","canalresultado","entradas","saidas","contas","receber","tarefas","dre","fluxo","precificacao","custos","dividas","paineldiv","calendario","estoque"].includes(paginaAtual);
@@ -808,7 +826,7 @@ function assinAbaAssinantes(c){
         <td class="r">${a.diaCobranca||"—"}</td>
         <td>${statusAssinBadge(a.status)}</td>
         <td class="r" style="white-space:nowrap">
-          ${ehGestorRaiz()? (a.tenant? `<button class="btn ghost sm" onclick="desativarAcessoAssin('${a._id}')">desativar acesso</button>` : `<button class="btn sm" onclick="criarAcessoAssin('${a._id}')">criar acesso</button>`) : ""}
+          ${ehGestorRaiz()? (a.tenant? `<button class="btn sm" onclick="entrarSuporte('${a.tenant}','${esc((a.nome||'').replace(/'/g,''))}')">entrar na base</button> <button class="btn ghost sm" onclick="desativarAcessoAssin('${a._id}')">desativar acesso</button>` : `<button class="btn sm" onclick="criarAcessoAssin('${a._id}')">criar acesso</button>`) : ""}
           ${a.status==="ativa"?`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','pausada')">pausar</button>`:`<button class="btn ghost sm" onclick="mudarStatusAssin('${a._id}','ativa')">reativar</button>`}
           <button class="btn ghost sm" onclick="editarAssinInicio('${a._id}')">editar</button>
           <button class="btn ghost sm" onclick="removerAssin('${a._id}')">excluir</button>
@@ -3278,6 +3296,9 @@ function identidadeVisualHTML(){
       <div><label class="f">Nome</label><input id="nm_${l.id}" value="${esc(lojaNome(l.id))}" onblur="salvarNomeLoja('${l.id}',this.value)"></div>
       <div><label class="f">Logo</label><input type="file" accept="image/*" onchange="subirLogo(this,'${l.id}')"></div>
       ${lojaLogo(l.id)?`<div style="flex:0"><label class="f">&nbsp;</label><button class="btn ghost sm" onclick="removerLogo('${l.id}')">remover</button></div>`:""}
+    </div>
+    <div class="row" style="margin-top:6px">
+      <div style="flex:1"><label class="f">Token do Cardápio Web desta loja (API Key) — opcional</label><input id="cw_${l.id}" value="${esc(lojaCfg(l.id).cwApiKey||'')}" placeholder="cole aqui a API Key do Cardápio Web desta loja" onblur="salvarCwLoja('${l.id}',this.value)"></div>
     </div>`).join("")}
   </div></div>
   ${lojasCustomHTML()}`;
@@ -3354,6 +3375,9 @@ function removerLogo(alvo){
 }
 function salvarNomeLoja(id,nome){
   salvarConfig({lojaPatch:{id, dados:{nome:(nome||"").trim()||null}}}); toast("Nome salvo.");
+}
+function salvarCwLoja(id,v){
+  salvarConfig({lojaPatch:{id, dados:{cwApiKey:(v||"").trim()||null}}}); toast("Token do Cardápio Web salvo.");
 }
 // Salva config de forma OTIMISTA (atualiza STATE e a tela na hora) e persiste no Firebase.
 function salvarConfig(patch){
