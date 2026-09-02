@@ -2580,6 +2580,47 @@ function criarDividaParcelada(){
   parcelas.forEach(p=>DB.push("contas",{descricao:desc+" — parcela "+p.k+"/"+n,valor:p.valor,vencimento:p.venc,categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja,recorrencia:"nenhuma",status:"aberta",acordoId,origem:"divida",criadoEm:Date.now()}));
   toast(n+" parcela(s) "+(FREQ_LABEL[freq]||"")+" criadas em Contas a pagar.");
 }
+/* ---- Negociar uma dívida existente: gera as parcelas e vira "Parcelada" ---- */
+let dividaNegId=null;
+function negociarInicio(id){ dividaNegId=id; dividaEditId=null; render(); }
+function linhaNegociarDivida(d){
+  const total = valorEmAberto(d);
+  return `<tr><td colspan="7" style="background:#f3effb;border:1px solid #e3d9f7">
+    <div style="font-weight:700;color:var(--purple-d);margin-bottom:8px">💜 Negociar: ${esc(d.categoria)}</div>
+    <div class="row">
+      <div><label class="f">Total negociado (R$)</label><input id="ng_total_${d._id}" inputmode="decimal" value="${total?String(Math.round(total*100)/100).replace('.',','):''}"></div>
+      <div><label class="f">Nº de parcelas</label><input id="ng_n_${d._id}" inputmode="numeric" value="12"></div>
+      <div><label class="f">Parcelas já pagas</label><input id="ng_pg_${d._id}" inputmode="numeric" value="0"></div>
+      <div><label class="f">1º vencimento</label><input type="date" id="ng_v1_${d._id}" value="${hojeISO()}"></div>
+      <div><label class="f">Frequência</label><select id="ng_fr_${d._id}"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal</option><option value="semanal">Semanal</option></select></div>
+      <div><label class="f">Categoria (DRE)</label><select id="ng_cs_${d._id}">${optCategorias(d.categoriaSaida||"IMPOSTOS_TAXAS")}</select></div>
+    </div>
+    <div class="small muted" style="margin-top:8px">Gera uma parcela por vencimento em <b>Contas a pagar</b> (entram no Fluxo e, ao pagar, no DRE). A dívida vira <b>Parcelada</b> e o saldo passa a ser o das parcelas em aberto.</div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn sm" onclick="salvarNegociacaoDivida('${d._id}')">Gerar parcelas e negociar</button>
+      <button class="btn ghost sm" onclick="dividaNegId=null;render()">Cancelar</button>
+    </div>
+  </td></tr>`;
+}
+function salvarNegociacaoDivida(id){
+  const d=STATE.dividas[id]; if(!d) return;
+  const loja=d.loja||lojaPadrao();
+  const total=num(val("ng_total_"+id)), n=Math.max(1,Math.round(num(val("ng_n_"+id))||1));
+  const pagas=Math.min(n,Math.max(0,Math.round(num(val("ng_pg_"+id))||0)));
+  const venc1=val("ng_v1_"+id)||hojeISO(), freq=val("ng_fr_"+id)||"mensal", cat=val("ng_cs_"+id)||"IMPOSTOS_TAXAS";
+  if(total<=0) return toast("Informe o valor total negociado.");
+  // Monta as parcelas EM ABERTO (da pagas+1 até n) para checar teto e gravar.
+  let acum=0; const parcelas=[];
+  for(let k=1;k<=n;k++){ const p=k===n?Math.round((total-acum)*100)/100:Math.round(total/n*100)/100; acum+=p; if(k>pagas) parcelas.push({k,valor:p,venc:vencParcela(venc1,freq,k-(pagas+1))}); }
+  const novoPorMes={}; parcelas.forEach(p=>{ const ym=(p.venc||"").slice(0,7); novoPorMes[ym]=(novoPorMes[ym]||0)+p.valor; });
+  const teto=tetoDividaLoja(loja);
+  if(teto>0){ const est=[]; Object.keys(novoPorMes).sort().forEach(ym=>{ const jaTem=obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&(c.loja||"")===loja&&(c.vencimento||"").slice(0,7)===ym).reduce((s,c)=>s+num(c.valor),0); if(jaTem+novoPorMes[ym]>teto) est.push("• "+fmtMesLabel(ym)+": "+reais(jaTem+novoPorMes[ym])+" (teto "+reais(teto)+")"); }); if(est.length && !confirm("⚠️ Ultrapassa o teto mensal de "+lojaNome(loja)+":\n\n"+est.join("\n")+"\n\nCriar mesmo assim?")) return; }
+  const acordoId="ac"+Date.now();
+  parcelas.forEach(p=>DB.push("contas",{descricao:d.categoria+" — parcela "+p.k+"/"+n,valor:p.valor,vencimento:p.venc,categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja,recorrencia:"nenhuma",status:"aberta",acordoId,origem:"divida",criadoEm:Date.now()}));
+  DB.update("dividas/"+id,{ status:"Parcelada", origem:"negociada", acordoId, valor:total, categoriaSaida:cat, frequencia:freq, totalParcelas:n, parcelasPagas:pagas, detalhe:"Negociada — "+n+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(total/n), prazo:"1º venc. "+fmtData(venc1) });
+  dividaNegId=null;
+  toast(parcelas.length+" parcela(s) criadas — dívida negociada.");
+}
 function renderDividas(el){
   document.getElementById("pgSub").textContent="Dívidas dos CNPJs (Receita Federal / PGFN), separadas por empresa.";
   const todas=obj2arr(STATE.dividas);
@@ -2603,14 +2644,14 @@ function renderDividas(el){
       const totDet=det.reduce((s,r)=>s+num(r.consolidado),0);
       html+=`<div class="card" style="margin-bottom:14px"><div class="hd"><h3>${esc(lojaNome(loja))} <span class="pill">${esc(cnpjLoja(loja))}</span></h3><p>Saldo em aberto: <b class="neg">${reais(tot)}</b></p></div><div class="bd">
         <table><thead><tr><th>Categoria</th><th>Detalhe</th><th class="r">Valor</th><th>Onde negociar</th><th>Prazo / observação</th><th>Status</th><th></th></tr></thead><tbody>${
-          ds.map(d=> d._id===dividaEditId ? linhaEdicaoDivida(d) : (()=>{const a=acordoInfo(d); return `<tr>
+          ds.map(d=> d._id===dividaEditId ? linhaEdicaoDivida(d) : d._id===dividaNegId ? linhaNegociarDivida(d) : (()=>{const a=acordoInfo(d); return `<tr>
             <td><b>${esc(d.categoria)}</b>${d.origem==="negociada"?' <span class="badge b-gold">parcelada</span>':''}</td>
             <td class="muted" style="max-width:260px">${esc(d.detalhe||"—")}${a?`<br><span class="badge ${a.pagas>=a.total?'b-green':'b-gray'}">${a.pagas}/${a.total} parcelas pagas</span>`:''}</td>
             <td class="r"><b class="neg">${reais(valorEmAberto(d))}</b>${a&&a.pagas>0?`<br><span class="small muted">de ${reais(d.valor)}</span>`:''}</td>
             <td class="muted" style="max-width:190px">${esc(d.onde||"—")}</td>
             <td class="muted" style="max-width:210px">${esc(d.prazo||"—")}</td>
             <td><select onchange="mudarStatusDivida('${d._id}',this.value)">${optStatusDivida(d.status)}</select></td>
-            <td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="editarDividaInicio('${d._id}')">editar</button> <button class="btn ghost sm" onclick="removerDivida('${d._id}')">×</button></td>
+            <td class="r" style="white-space:nowrap">${d.acordoId?"":`<button class="btn sm" onclick="negociarInicio('${d._id}')">negociar</button> `}<button class="btn ghost sm" onclick="editarDividaInicio('${d._id}')">editar</button> <button class="btn ghost sm" onclick="removerDivida('${d._id}')">×</button></td>
           </tr>`;})()).join("")
         }</tbody></table>
         ${det.length?`<details style="margin-top:12px"><summary style="cursor:pointer;font-weight:700;color:var(--purple-d)">Ver detalhe por competência (SIEF) — ${det.length} lançamentos · consolidado ${reais(totDet)}</summary>
