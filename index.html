@@ -1268,7 +1268,7 @@ function renderContas(el){
         <td class="muted">${catLabel(c.categoria)}</td>
         <td class="muted">${esc(c.fornecedor||"—")}</td>
         <td class="r"><b class="neg">${reais(c.valor)}</b></td>
-        <td class="r" style="white-space:nowrap"><button class="btn sm" onclick="pagarConta('${c._id}')">Pagar</button> <button class="btn ghost sm" onclick="editarContaInicio('${c._id}')">editar</button> <button class="btn ghost sm" onclick="removerConta('${c._id}')">excluir</button></td>
+        <td class="r" style="white-space:nowrap"><button class="btn sm" onclick="pagarConta('${c._id}')">Pagar</button> ${(c.recorrencia&&c.recorrencia!=="nenhuma")?`<button class="btn ghost sm" onclick="gerarProximasRec('${c._id}')" title="Criar as próximas ocorrências">gerar próximas</button> `:""}<button class="btn ghost sm" onclick="editarContaInicio('${c._id}')">editar</button> <button class="btn ghost sm" onclick="removerConta('${c._id}')">excluir</button></td>
       </tr>`;
   const totalAberto = abertas.reduce((s,c)=>s+num(c.valor),0);
   el.innerHTML = `
@@ -1336,10 +1336,10 @@ function pagarConta(id){
   // vira uma saída no caixa, na data de hoje
   DB.push("caixa/saidas",{data:hojeISO(),valor:num(c.valor),categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,descricao:(c.descricao||"Conta")+" (conta paga)",status:"confirmado",origem:"conta",loja:c.loja||lojaPadrao(),criadoEm:Date.now()});
   DB.update("contas/"+id,{status:"paga",pagoEm:Date.now()});
-  // recorrência: cria a próxima conta no intervalo configurado
+  // recorrência: cria a próxima conta no intervalo configurado (só se ainda não existir)
   const prox=proximaDataRec(c.vencimento, c.recorrencia);
-  if(prox){
-    DB.push("contas",{descricao:c.descricao,valor:num(c.valor),vencimento:prox,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,loja:c.loja||lojaPadrao(),recorrencia:c.recorrencia,status:"aberta",criadoEm:Date.now()});
+  if(prox && !existeRecorrente(c, prox)){
+    DB.push("contas",{descricao:c.descricao,valor:num(c.valor),vencimento:prox,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,loja:c.loja||lojaPadrao(),recorrencia:c.recorrencia,status:"aberta",origem:c.origem||"manual",criadoEm:Date.now()});
   }
   toast("Conta paga e lançada no caixa.");
 }
@@ -1348,6 +1348,22 @@ function proximaDataRec(iso, rec){
   if(rec==="quinzenal") return maisDias(iso||hojeISO(),15);
   if(rec==="mensal") return proximoMesISO(iso);
   return null;
+}
+// Já existe uma ocorrência dessa conta recorrente (mesma descrição/loja/frequência) naquele vencimento?
+function existeRecorrente(c, venc){
+  return obj2arr(STATE.contas).some(x=>(x.descricao||"")===(c.descricao||"") && (x.loja||"")===(c.loja||"") && x.recorrencia===c.recorrencia && x.vencimento===venc && x.status!=="paga");
+}
+// Cria de uma vez as próximas ocorrências de uma conta recorrente (ex.: 8 quartas seguintes).
+function gerarProximasRec(id){
+  const c=STATE.contas[id]; if(!c || !c.recorrencia || c.recorrencia==="nenhuma") return toast("Esta conta não é recorrente.");
+  let venc=c.vencimento, criadas=0;
+  for(let i=0;i<8;i++){
+    venc=proximaDataRec(venc, c.recorrencia); if(!venc) break;
+    if(existeRecorrente(c, venc)) continue;
+    DB.push("contas",{descricao:c.descricao,valor:num(c.valor),vencimento:venc,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,loja:c.loja||lojaPadrao(),recorrencia:c.recorrencia,status:"aberta",origem:c.origem||"manual",criadoEm:Date.now()});
+    criadas++;
+  }
+  toast(criadas? (criadas+" próxima(s) ocorrência(s) criada(s).") : "As próximas já estavam criadas.");
 }
 function recLabel(rec){ return rec==="semanal"?"semanal":rec==="quinzenal"?"15 em 15 dias":rec==="mensal"?"mensal":""; }
 let contaEditId=null;
