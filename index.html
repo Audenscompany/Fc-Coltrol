@@ -378,7 +378,7 @@ function fazerLogin(){
     }
   }
   localStorage.setItem("fc_sessao",JSON.stringify(SESSAO));
-  entrarApp();
+  location.reload(); // recarrega sempre para o banco ligar na base certa (raiz ou cliente)
 }
 function emailKey(e){ return (e||"").toLowerCase().replace(/[.#$/\[\]]/g,"_"); }
 function tenantAtual(){ return (SESSAO && SESSAO.tenant) || ""; }
