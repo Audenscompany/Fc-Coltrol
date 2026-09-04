@@ -620,6 +620,7 @@ const PAGINAS = [
   {id:"dre",icon:"📑",label:"DRE (resultado)",grupo:"FINANCEIRO",render:renderDRE},
   {id:"dividas",icon:"🏛️",label:"Dívidas (CNPJ)",grupo:"FINANCEIRO",render:renderDividas},
   {id:"paineldiv",icon:"📊",label:"Painel de dívidas",grupo:"FINANCEIRO",render:renderPainelDividas},
+  {id:"divneg",icon:"💜",label:"Dívidas negociadas",grupo:"FINANCEIRO",render:renderDividasNegociadas},
   {id:"custos",icon:"📒",label:"Custos fixos/variáveis",grupo:"CUSTOS E OPERAÇÃO",render:renderCustos},
   {id:"precificacao",icon:"🏷️",label:"Precificação",grupo:"CUSTOS E OPERAÇÃO",render:renderPrecificacao},
   {id:"colaboradores",icon:"👥",label:"Colaboradores",grupo:"CUSTOS E OPERAÇÃO",render:renderColaboradores},
@@ -2701,6 +2702,58 @@ function tetoRede(){ return num((STATE.config&&STATE.config.tetoDivida&&STATE.co
 function tetoDividaScope(){ if(lojaFiltro!=="todos") return tetoDividaLoja(lojaFiltro); return tetoRede()>0 ? tetoRede() : LOJAS.reduce((t,l)=>t+tetoDividaLoja(l.id),0); }
 // Soma das parcelas de dívidas negociadas (contas origem "divida") com vencimento no mês ym.
 function parcelasDividaMes(ym){ return obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&daLoja(c)&&(c.vencimento||"").slice(0,7)===ym).reduce((s,c)=>s+num(c.valor),0); }
+// Só as parcelas de dívida AINDA EM ABERTO com vencimento no mês ym (comprometimento futuro).
+function parcelasDividaAbertoMes(ym){ return obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&c.status!=="paga"&&daLoja(c)&&(c.vencimento||"").slice(0,7)===ym).reduce((s,c)=>s+num(c.valor),0); }
+function renderDividasNegociadas(el){
+  document.getElementById("pgSub").textContent="Acordos negociados: progresso de cada dívida e projeção mês a mês (quando o comprometimento sobe ou cai).";
+  const negs = obj2arr(STATE.dividas).filter(d=>d.acordoId && daLoja(d));
+  if(!negs.length){ el.innerHTML=`<div class="card"><div class="bd"><div class="empty">Nenhuma dívida negociada ainda. Vá em <a class="linkmais" onclick="irPara('dividas')">Dívidas (CNPJ)</a> e clique em <b>negociar</b> numa dívida para gerar as parcelas.</div></div></div>`; return; }
+  let tTotal=0,tPago=0,tAberto=0;
+  const linhas=negs.map(d=>{
+    const cs=obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId);
+    const valorPago=cs.filter(c=>c.status==="paga").reduce((s,c)=>s+num(c.valor),0);
+    const abertasCs=cs.filter(c=>c.status!=="paga");
+    const aberto=abertasCs.reduce((s,c)=>s+num(c.valor),0);
+    const valorTotal=num(d.valor)||(valorPago+aberto);
+    const a=acordoInfo(d)||{pagas:0,total:cs.length};
+    const prox=abertasCs.sort((x,y)=>(x.vencimento||"").localeCompare(y.vencimento||""))[0];
+    tTotal+=valorTotal; tPago+=valorPago; tAberto+=aberto;
+    return {d,valorPago,aberto,valorTotal,pagas:a.pagas,total:a.total,prox};
+  }).sort((x,y)=>y.aberto-x.aberto);
+  // Linha do tempo: comprometimento (parcelas EM ABERTO) por mês, do mês atual em diante.
+  const abertos=obj2arr(STATE.contas).filter(c=>c.origem==="divida"&&c.status!=="paga"&&daLoja(c));
+  const mesesSet=[...new Set(abertos.map(c=>(c.vencimento||"").slice(0,7)).filter(m=>m>=mesAtual()))].sort();
+  const timeline=mesesSet.slice(0,24).map(ym=>({ym, v:parcelasDividaAbertoMes(ym)}));
+  const maxV=Math.max(1,...timeline.map(t=>t.v));
+  el.innerHTML=`
+  <div class="grid g4" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">Total negociado</div><div class="val">${reais(tTotal)}</div><div class="hint">${negs.length} acordo(s)</div></div>
+    <div class="stat"><div class="lbl">Já pago</div><div class="val pos">${reais(tPago)}</div><div class="hint">${tTotal?Math.round(tPago/tTotal*100):0}% quitado</div></div>
+    <div class="stat"><div class="lbl">Saldo em aberto</div><div class="val neg">${reais(tAberto)}</div></div>
+    <div class="stat"><div class="lbl">Comprometido este mês</div><div class="val">${reais(parcelasDividaAbertoMes(mesAtual()))}</div></div>
+  </div>
+  <div class="card" style="margin-bottom:14px"><div class="hd"><h3>Progresso dos acordos</h3><p>Quanto já foi pago e quanto falta em cada dívida negociada.</p></div><div class="bd">
+    <table><thead><tr><th>Dívida</th><th class="r">Parcelas</th><th class="r">Pago</th><th class="r">Falta</th><th style="width:220px">Progresso</th><th>Próx. venc.</th></tr></thead><tbody>${
+      linhas.map(l=>{const pct=l.valorTotal?Math.round(l.valorPago/l.valorTotal*100):0; return `<tr>
+        <td><b>${esc(l.d.categoria)}</b> <span class="pill">${esc(lojaNome(l.d.loja))}</span></td>
+        <td class="r">${l.pagas}/${l.total}</td>
+        <td class="r pos">${reais(l.valorPago)}</td>
+        <td class="r neg">${reais(l.aberto)}</td>
+        <td><div style="background:#eee;border-radius:8px;height:14px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--purple,#6b3fa0)"></div></div><div class="small muted" style="text-align:right">${pct}%</div></td>
+        <td>${l.prox?fmtData(l.prox.vencimento):'<span class="muted">—</span>'}</td>
+      </tr>`;}).join("")
+    }</tbody></table>
+  </div></div>
+  <div class="card"><div class="hd"><h3>Projeção mês a mês</h3><p>Valor das parcelas em aberto por mês. A seta mostra se o comprometimento sobe ou cai em relação ao mês anterior.</p></div><div class="bd">
+    ${timeline.length? timeline.map((t,i)=>{const prev=i>0?timeline[i-1].v:null; const delta=prev==null?"":(t.v>prev?'<span class="neg">▲ subiu</span>':t.v<prev?'<span class="pos">▼ caiu</span>':'<span class="muted">= igual</span>'); const w=Math.round(t.v/maxV*100); return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--line)">
+      <div style="width:90px;font-weight:600">${fmtMesLabel(t.ym)}</div>
+      <div style="flex:1;background:#f1edf9;border-radius:8px;height:16px;overflow:hidden"><div style="width:${w}%;height:100%;background:#8a5cd0"></div></div>
+      <div style="width:110px;text-align:right"><b>${reais(t.v)}</b></div>
+      <div style="width:80px;text-align:right;font-size:12px">${delta}</div>
+    </div>`;}).join("") : `<div class="empty">Nenhuma parcela em aberto à frente.</div>`}
+    <div class="small muted" style="margin-top:8px">O comprometimento cai quando um acordo termina e sobe quando você negocia uma nova dívida.</div>
+  </div></div>`;
+}
 function salvarTetoDivida(){ const loja=val("td_loja")||lojaPadrao(); const v=num(val("td_val")); const cur=Object.assign({},(STATE.config&&STATE.config.tetoDivida)||{}); cur[loja]=v; DB.update("config",{tetoDivida:cur}); toast("Teto da "+(loja==="rede"?"Rede":lojaNome(loja))+" definido em "+reais(v)+"/mês."); }
 function renderPainelDividas(el){
   document.getElementById("pgSub").textContent="Gestão das dívidas: exposição, teto mensal de parcelas e projeção para não comprometer o caixa.";
