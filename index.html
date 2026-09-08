@@ -2992,36 +2992,42 @@ function cardFolhaCLT(){
   const total = clts.reduce((s,x)=>s+num(x.salario),0);
   const venc = diaUtilDoMes(ym,5);
   const reg = STATE.colabPagto && STATE.colabPagto["clt_"+ym];
-  const conta = reg && reg.contaId ? STATE.contas[reg.contaId] : null;
-  const paga = conta && conta.status==="paga";
+  const ids = (reg && reg.ids) || {};
+  const contasGer = Object.values(ids).map(cid=>STATE.contas[cid]).filter(Boolean);
+  const nGer = contasGer.length, totalGer = contasGer.reduce((s,c)=>s+num(c.valor),0), nPagas = contasGer.filter(c=>c.status==="paga").length;
+  const faltam = clts.filter(x=>!ids[x._id]).length;
   let corpo;
   if(!clts.length){ corpo = `<div class="small muted">Nenhum colaborador CLT com salário informado. Marque <b>CLT</b> e preencha o <b>salário</b> na aba Cadastro.</div>`; }
-  else if(!conta){
+  else if(!nGer){
     corpo = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div><div><b>Folha CLT de ${fmtMesLabel(ym)}:</b> ${reais(total)} · ${clts.length} colaborador(es)</div>
-      <div class="small muted">Pagamento no <b>5º dia útil</b> (${fmtData(venc)}). Gera uma conta a pagar que entra no Calendário e no Fluxo.</div></div>
-      ${podePagarColab()? `<button class="btn" onclick="gerarFolhaCLT('${ym}')">Gerar conta a pagar</button>`:`<span class="badge b-gray">só gestor/financeiro</span>`}</div>`;
-  } else if(paga){
-    corpo = `<div><b>✅ Folha de ${fmtMesLabel(ym)} paga</b> · ${reais(conta.valor)}. <a class="linkmais" onclick="irPara('contas')">ver em Contas a pagar →</a></div>`;
+      <div class="small muted">Cria <b>uma conta a pagar por colaborador</b>, todas no <b>5º dia útil</b> (${fmtData(venc)}). Entram no Calendário e no Fluxo.</div></div>
+      ${podePagarColab()? `<button class="btn" onclick="gerarFolhaCLT('${ym}')">Gerar contas (uma por CLT)</button>`:`<span class="badge b-gray">só gestor/financeiro</span>`}</div>`;
   } else {
-    const desatual = Math.abs(num(conta.valor)-total)>=0.01;
     corpo = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-      <div><div><b>Conta gerada:</b> ${reais(conta.valor)} · vence ${fmtData(conta.vencimento||venc)}</div>
-      <div class="small muted">${desatual?`⚠️ O total da folha mudou para ${reais(total)}. Atualize.`:"Aprove em Contas a pagar (botão Pagar) para lançar a saída."}</div></div>
-      <div style="display:flex;gap:8px">${desatual&&podePagarColab()?`<button class="btn ghost sm" onclick="atualizarFolhaCLT('${ym}',${total})">Atualizar valor</button>`:""}<button class="btn sm" onclick="irPara('contas')">Ver em Contas a pagar</button></div></div>`;
+      <div><div><b>${nGer} conta(s) de salário geradas</b> · total ${reais(totalGer)} · ${nPagas}/${nGer} pagas · vence ${fmtData(venc)}</div>
+      <div class="small muted">Cada CLT tem a sua conta em Contas a pagar. ${faltam?`⚠️ ${faltam} colaborador(es) CLT ainda sem conta neste mês.`:"Aprove cada uma (Pagar) para lançar a saída."}</div></div>
+      <div style="display:flex;gap:8px">${(faltam&&podePagarColab())?`<button class="btn ghost sm" onclick="gerarFolhaCLT('${ym}')">Gerar faltantes</button>`:""}<button class="btn sm" onclick="irPara('contas')">Ver em Contas a pagar</button></div></div>`;
   }
   return `<div class="card" style="margin-bottom:14px;border-color:#e3d9f7"><div class="hd"><h3>👔 Folha CLT (mensal)</h3></div><div class="bd">${corpo}</div></div>`;
 }
 function gerarFolhaCLT(ym){
   if(!podePagarColab()) return toast("Sem permissão.");
-  const total = cltAtivos().reduce((s,x)=>s+num(x.salario),0);
-  if(total<=0) return toast("Nenhum salário CLT informado.");
+  const clts = cltAtivos();
+  if(!clts.length) return toast("Nenhum salário CLT informado.");
   const venc = diaUtilDoMes(ym,5);
-  const id = DB.push("contas",{ descricao:"Folha CLT — "+fmtMesLabel(ym), valor:total, vencimento:venc, categoria:"SALARIOS", grupo:grupoDe("SALARIOS"), fornecedor:"Folha CLT", status:"aberta", origem:"folha-clt", cltMes:ym, loja:LOJAS[0].id, criadoEm:Date.now() });
-  DB.set("colabPagto/clt_"+ym,{ contaId:id, valor:total, venc, em:Date.now() });
-  toast("Folha CLT gerada — vence no 5º dia útil ("+fmtData(venc)+"). Aprove em Contas a pagar.");
+  const reg = STATE.colabPagto && STATE.colabPagto["clt_"+ym];
+  const ids = (reg && reg.ids) || {};
+  let n=0;
+  clts.forEach(x=>{
+    if(ids[x._id]) return; // já tem conta neste mês (não duplica)
+    const id = DB.push("contas",{ descricao:"Salário "+x.nome+" — "+fmtMesLabel(ym), valor:num(x.salario), vencimento:venc, categoria:"SALARIOS", grupo:grupoDe("SALARIOS"), fornecedor:x.nome, status:"aberta", origem:"folha-clt", cltMes:ym, colabId:x._id, loja:LOJAS[0].id, criadoEm:Date.now() });
+    DB.update("colabPagto/clt_"+ym+"/ids",{[x._id]:id});
+    n++;
+  });
+  DB.update("colabPagto/clt_"+ym,{ venc, em:Date.now() });
+  toast(n? (n+" conta(s) de salário criadas — vencem no 5º dia útil ("+fmtData(venc)+").") : "As contas deste mês já estavam geradas.");
 }
-function atualizarFolhaCLT(ym,total){ const reg=STATE.colabPagto&&STATE.colabPagto["clt_"+ym]; if(!reg||!reg.contaId) return; DB.update("contas/"+reg.contaId,{valor:num(total)}); DB.update("colabPagto/clt_"+ym,{valor:num(total)}); toast("Valor da folha atualizado."); }
 /* ----- Gera a conta a pagar do pagamento do ciclo (vira saída ao aprovar) - */
 function podePagarColab(){ return ehGestor() || temAcesso("saidas") || temAcesso("contas"); }
 function cardContaColab(ini, total){
