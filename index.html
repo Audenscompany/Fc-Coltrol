@@ -2844,19 +2844,21 @@ function renderColaboradores(el){
   return colabPagamentos(c);
 }
 function colabPix(c){
-  const lista=obj2arr(STATE.colaboradores).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  const lista=obj2arr(STATE.colaboradores);
+  const alfa=(a,b)=>(a.nome||"").localeCompare(b.nome||"");
+  const salao=lista.filter(x=>x.tipo!=="motoboy").sort(alfa);
+  const moto=lista.filter(x=>x.tipo==="motoboy").sort(alfa);
+  const linhaPix=x=>`<tr>
+    <td><b>${esc(x.nome)}</b>${x.clt?' <span class="badge b-gray">CLT</span>':''}</td>
+    <td><select onchange="salvarPixTipo('${x._id}',this.value)">${["","CPF","Celular","E-mail","Aleatória"].map(t=>`<option value="${t}"${(x.pixTipo||"")===t?" selected":""}>${t||"—"}</option>`).join("")}</select></td>
+    <td><input id="pix_${x._id}" style="width:260px" value="${esc(x.pix||"")}" placeholder="cole a chave PIX" onblur="salvarPix('${x._id}',this.value)"></td>
+    <td class="r" style="white-space:nowrap"><button class="btn sm" onclick="copiarPix('${x._id}')">copiar</button></td>
+  </tr>`;
+  const grupo=(titulo,arr)=> arr.length?`<tr><td colspan="4" style="background:#f3eefb;font-weight:700;color:var(--purple-d,#5b2bb0)">${titulo} (${arr.length})</td></tr>${arr.map(linhaPix).join("")}`:"";
   c.innerHTML=`
-  <div class="card" style="margin-top:14px"><div class="hd"><h3>Chaves PIX dos colaboradores</h3><p>Cadastre a chave de cada um e use o botão <b>copiar</b> para colar no app do banco na hora da transferência.</p></div><div class="bd">
-    ${lista.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th>Tipo da chave</th><th>Chave PIX</th><th></th></tr></thead><tbody>${
-      lista.map(x=>`<tr>
-        <td><b>${esc(x.nome)}</b></td>
-        <td class="muted">${x.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}${x.clt?' · CLT':''}</td>
-        <td><select onchange="salvarPixTipo('${x._id}',this.value)">
-          ${["","CPF","Celular","E-mail","Aleatória"].map(t=>`<option value="${t}"${(x.pixTipo||"")===t?" selected":""}>${t||"—"}</option>`).join("")}
-        </select></td>
-        <td><input id="pix_${x._id}" style="width:260px" value="${esc(x.pix||"")}" placeholder="cole a chave PIX" onblur="salvarPix('${x._id}',this.value)"></td>
-        <td class="r" style="white-space:nowrap"><button class="btn sm" onclick="copiarPix('${x._id}')">copiar</button></td>
-      </tr>`).join("")
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Chaves PIX dos colaboradores</h3><p>Separado por Cozinha e Motoboy, em ordem alfabética. Use o botão <b>copiar</b> para colar no banco na hora da transferência.</p></div><div class="bd">
+    ${lista.length?`<table><thead><tr><th>Colaborador</th><th>Tipo da chave</th><th>Chave PIX</th><th></th></tr></thead><tbody>${
+      grupo("Salão/Cozinha",salao)+grupo("Motoboys",moto)
     }</tbody></table><div class="small muted" style="margin-top:8px">A chave salva ao sair do campo. O botão <b>copiar</b> coloca a chave na área de transferência — é só colar (Ctrl/Cmd+V) no PIX do banco.</div>`:`<div class="empty">Nenhum colaborador cadastrado. Cadastre em "Cadastro" primeiro.</div>`}
   </div></div>`;
 }
@@ -2923,9 +2925,16 @@ function colabHistorico(c){
     <div class="stat"><div class="lbl">Dias lançados</div><div class="val">${d.perDay.length}</div></div>
   </div>
   <div class="card" style="margin-bottom:14px"><div class="hd"><h3>Total por colaborador</h3><p>Soma de tudo dentro do período selecionado.</p></div><div class="bd">
-    ${d.linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Desconto</th><th class="r">Total</th></tr></thead><tbody>${
-      d.linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('<span class="neg">-'+reais(p.desc)+'</span>'):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
-    }<tr style="border-top:2px solid var(--ink)"><td colspan="7"><b>Total</b></td><td class="r"><b class="neg">${reais(d.totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste período.</div>`}
+    ${d.linhas.length?(()=>{
+      const alfa=(a,b)=>(a.nome||"").localeCompare(b.nome||"");
+      const salao=d.linhas.filter(p=>p.tipo!=="motoboy").sort(alfa);
+      const moto=d.linhas.filter(p=>p.tipo==="motoboy").sort(alfa);
+      const linhaTot=p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('<span class="neg">-'+reais(p.desc)+'</span>'):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`;
+      const sub=(t,arr)=>arr.length?`<tr><td colspan="8" style="background:#f3eefb;font-weight:700;color:var(--purple-d,#5b2bb0)">${t} (${arr.length}) · ${reais(arr.reduce((s,p)=>s+p.total,0))}</td></tr>${arr.map(linhaTot).join("")}`:"";
+      return `<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Desconto</th><th class="r">Total</th></tr></thead><tbody>${
+        sub("Salão/Cozinha",salao)+sub("Motoboys",moto)
+      }<tr style="border-top:2px solid var(--ink)"><td colspan="7"><b>Total</b></td><td class="r"><b class="neg">${reais(d.totalGeral)}</b></td></tr></tbody></table>`;
+    })():`<div class="empty">Nenhum dia lançado neste período.</div>`}
   </div></div>
   <div class="card"><div class="hd"><h3>Por dia</h3><p>Resumo de cada dia dentro do período.</p></div><div class="bd">
     ${d.perDay.length?`<table><thead><tr><th>Data</th><th class="r">Salão</th><th class="r">Motoboys</th><th class="r">Diárias</th><th class="r">Taxa serv.</th><th class="r">Total moto</th><th class="r">Desconto</th><th class="r">Total dia</th></tr></thead><tbody>${
@@ -2936,7 +2945,10 @@ function colabHistorico(c){
 function baixarPdfColab(){
   histParams();
   const ini=histIni, fim=histFim, d=dadosHistorico(ini,fim);
-  const linhasTot=d.linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' (CLT)':''}</td><td>${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('-'+reais(p.desc)):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("");
+  const _alfaP=(a,b)=>(a.nome||"").localeCompare(b.nome||"");
+  const _rowP=p=>`<tr><td>${esc(p.nome)}${p.clt?' (CLT)':''}</td><td>${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('-'+reais(p.desc)):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`;
+  const _subP=(t,arr)=>arr.length?`<tr><td colspan="8" style="background:#efeaf7;font-weight:bold">${t}</td></tr>${arr.map(_rowP).join("")}`:"";
+  const linhasTot=_subP("Salão/Cozinha",d.linhas.filter(p=>p.tipo!=="motoboy").sort(_alfaP))+_subP("Motoboys",d.linhas.filter(p=>p.tipo==="motoboy").sort(_alfaP));
   const linhasDia=d.perDay.map(x=>`<tr><td>${fmtData(x.data)}</td><td class="r">${x.nS}</td><td class="r">${x.nM}</td><td class="r">${x.diarias?reais(x.diarias):"—"}</td><td class="r">${x.taxa?reais(x.taxa):"—"}</td><td class="r">${x.motoR?reais(x.motoR):"—"}</td><td class="r">${x.desc?('-'+reais(x.desc)):"—"}</td><td class="r"><b>${reais(x.total)}</b></td></tr>`).join("");
   const doc=`<!doctype html><html><head><meta charset="utf-8"><title>Relatório de Colaboradores</title>
   <style>
