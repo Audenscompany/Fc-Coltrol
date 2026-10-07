@@ -1956,9 +1956,11 @@ function cardSemanaDashboard(){
   </div></div>`;
 }
 let diaSelCal=null;
-let contaReprogId=null;
-function reprogramarInicio(id){ contaReprogId=id; render(); }
+let contaReprogId=null, contaValorId=null;
+function reprogramarInicio(id){ contaReprogId=id; contaValorId=null; render(); }
 function salvarReprograma(id){ const nv=val("rp_"+id); if(!nv) return toast("Escolha a nova data."); DB.update("contas/"+id,{vencimento:nv}); contaReprogId=null; toast("Conta reprogramada para "+fmtData(nv)+"."); }
+function editarValorInicio(id){ contaValorId=id; contaReprogId=null; render(); }
+function salvarValorConta(id){ const v=num(val("ev_"+id)); if(v<=0) return toast("Informe um valor."); DB.update("contas/"+id,{valor:v}); contaValorId=null; toast("Valor atualizado para "+reais(v)+"."); }
 function renderCalendario(el){
   const ym=mesRef;
   document.getElementById("pgSub").textContent="Contas a pagar e a receber do mês — "+fmtMesLabel(ym)+". Clique num dia para ver os detalhes.";
@@ -1984,9 +1986,12 @@ function renderCalendario(el){
   if(diaSel){ const dd=contasDoDia(diaSel); const temAlgo=dd.pagar.length||dd.receber.length;
     detalhe=`<div class="card" style="margin-top:14px"><div class="hd"><h3>${fmtData(diaSel)} — ${DIA_SEMANA[new Date(diaSel+"T00:00:00").getDay()]}</h3></div><div class="bd">
       ${temAlgo? `
-        ${dd.pagar.length?`<div class="small muted" style="margin-bottom:4px">A pagar</div><table><tbody>${dd.pagar.map(c=> c._id===contaReprogId
+        ${dd.pagar.length?`<div class="small muted" style="margin-bottom:4px">A pagar</div><table><tbody>${dd.pagar.map(c=>
+          c._id===contaReprogId
           ? `<tr><td colspan="3">Reprogramar <b>${esc(c.descricao||"—")}</b> para: <input type="date" id="rp_${c._id}" value="${(c.vencimento||'').slice(0,10)}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="salvarReprograma('${c._id}')">Salvar</button> <button class="btn ghost sm" onclick="contaReprogId=null;render()">Cancelar</button></td></tr>`
-          : `<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="muted">${catLabel(c.categoria)}</td><td class="r neg"><b>${reais(c.valor)}</b></td><td class="r" style="white-space:nowrap">${btnContaAcao(c)}${c.virtual?'':` <button class="btn ghost sm" onclick="reprogramarInicio('${c._id}')">Reprogramar</button>`}</td></tr>`).join("")}</tbody></table>`:''}
+          : c._id===contaValorId
+          ? `<tr><td colspan="3">Novo valor de <b>${esc(c.descricao||"—")}</b>: <input id="ev_${c._id}" inputmode="decimal" style="width:130px" value="${c.valor!=null?String(c.valor).replace('.',','):''}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="salvarValorConta('${c._id}')">Salvar</button> <button class="btn ghost sm" onclick="contaValorId=null;render()">Cancelar</button></td></tr>`
+          : `<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="muted">${catLabel(c.categoria)}</td><td class="r neg"><b>${reais(c.valor)}</b></td><td class="r" style="white-space:nowrap">${btnContaAcao(c)}${c.virtual?'':` <button class="btn ghost sm" onclick="editarValorInicio('${c._id}')">valor</button> <button class="btn ghost sm" onclick="reprogramarInicio('${c._id}')">Reprogramar</button>`}</td></tr>`).join("")}</tbody></table>`:''}
         ${dd.receber.length?`<div class="small muted" style="margin:10px 0 4px">A receber</div><table><tbody>${dd.receber.map(c=>`<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="r pos"><b>${reais(c.valor)}</b></td><td class="r"><button class="btn sm" onclick="receberConta('${c._id}')">Receber</button></td></tr>`).join("")}</tbody></table>`:''}
       ` : `<div class="empty">Nada previsto para este dia.</div>`}
     </div></div>`;
