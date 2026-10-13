@@ -1332,10 +1332,11 @@ function addConta(){
   DB.push("contas",Object.assign({},base,{descricao,valor,loja}));
   toast("Conta adicionada.");
 }
-function pagarConta(id){
+function pagarConta(id, dataPag){
   const c=STATE.contas[id]; if(!c) return;
-  // vira uma saída no caixa, na data de hoje
-  DB.push("caixa/saidas",{data:hojeISO(),valor:num(c.valor),categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,descricao:(c.descricao||"Conta")+" (conta paga)",status:"confirmado",origem:"conta",loja:c.loja||lojaPadrao(),criadoEm:Date.now()});
+  const dpag = (dataPag && /^\d{4}-\d{2}-\d{2}$/.test(dataPag)) ? dataPag : hojeISO();
+  // vira uma saída no caixa, na data do pagamento (hoje por padrão; pode ser retroativa)
+  DB.push("caixa/saidas",{data:dpag,valor:num(c.valor),categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,descricao:(c.descricao||"Conta")+" (conta paga)",status:"confirmado",origem:"conta",loja:c.loja||lojaPadrao(),criadoEm:Date.now()});
   DB.update("contas/"+id,{status:"paga",pagoEm:Date.now()});
   // recorrência: cria a próxima conta no intervalo configurado (só se ainda não existir)
   const prox=proximaDataRec(c.vencimento, c.recorrencia);
@@ -1956,8 +1957,10 @@ function cardSemanaDashboard(){
   </div></div>`;
 }
 let diaSelCal=null;
-let contaReprogId=null, contaValorId=null;
-function reprogramarInicio(id){ contaReprogId=id; contaValorId=null; render(); }
+let contaReprogId=null, contaValorId=null, contaPagId=null;
+function pagarInicio(id){ contaPagId=id; contaReprogId=null; contaValorId=null; render(); }
+function confirmarPagamentoData(id){ const d=val("pg_"+id)||hojeISO(); contaPagId=null; pagarConta(id, d); }
+function reprogramarInicio(id){ contaReprogId=id; contaValorId=null; contaPagId=null; render(); }
 function salvarReprograma(id){ const nv=val("rp_"+id); if(!nv) return toast("Escolha a nova data."); DB.update("contas/"+id,{vencimento:nv}); contaReprogId=null; toast("Conta reprogramada para "+fmtData(nv)+"."); }
 function editarValorInicio(id){ contaValorId=id; contaReprogId=null; render(); }
 function salvarValorConta(id){ const v=num(val("ev_"+id)); if(v<=0) return toast("Informe um valor."); DB.update("contas/"+id,{valor:v}); contaValorId=null; toast("Valor atualizado para "+reais(v)+"."); }
@@ -1991,14 +1994,15 @@ function renderCalendario(el){
           ? `<tr><td colspan="3">Reprogramar <b>${esc(c.descricao||"—")}</b> para: <input type="date" id="rp_${c._id}" value="${(c.vencimento||'').slice(0,10)}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="salvarReprograma('${c._id}')">Salvar</button> <button class="btn ghost sm" onclick="contaReprogId=null;render()">Cancelar</button></td></tr>`
           : c._id===contaValorId
           ? `<tr><td colspan="3">Novo valor de <b>${esc(c.descricao||"—")}</b>: <input id="ev_${c._id}" inputmode="decimal" style="width:130px" value="${c.valor!=null?String(c.valor).replace('.',','):''}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="salvarValorConta('${c._id}')">Salvar</button> <button class="btn ghost sm" onclick="contaValorId=null;render()">Cancelar</button></td></tr>`
-          : `<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="muted">${catLabel(c.categoria)}</td><td class="r neg"><b>${reais(c.valor)}</b></td><td class="r" style="white-space:nowrap">${btnContaAcao(c)}${c.virtual?'':` <button class="btn ghost sm" onclick="editarValorInicio('${c._id}')">valor</button> <button class="btn ghost sm" onclick="reprogramarInicio('${c._id}')">Reprogramar</button>`}</td></tr>`).join("")}</tbody></table>`:''}
+          : c._id===contaPagId
+          ? `<tr><td colspan="3">Pagar <b>${esc(c.descricao||"—")}</b> — data do pagamento: <input type="date" id="pg_${c._id}" value="${hojeISO()}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="confirmarPagamentoData('${c._id}')">Confirmar pagamento</button> <button class="btn ghost sm" onclick="contaPagId=null;render()">Cancelar</button></td></tr>`
+          : `<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="muted">${catLabel(c.categoria)}</td><td class="r neg"><b>${reais(c.valor)}</b></td><td class="r" style="white-space:nowrap">${c.virtual?btnContaAcao(c):`<button class="btn sm" onclick="pagarInicio('${c._id}')">Pagar</button> <button class="btn ghost sm" onclick="editarValorInicio('${c._id}')">valor</button> <button class="btn ghost sm" onclick="reprogramarInicio('${c._id}')">Reprogramar</button>`}</td></tr>`).join("")}</tbody></table>`:''}
         ${dd.receber.length?`<div class="small muted" style="margin:10px 0 4px">A receber</div><table><tbody>${dd.receber.map(c=>`<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="r pos"><b>${reais(c.valor)}</b></td><td class="r"><button class="btn sm" onclick="receberConta('${c._id}')">Receber</button></td></tr>`).join("")}</tbody></table>`:''}
       ` : `<div class="empty">Nada previsto para este dia.</div>`}
     </div></div>`;
   }
   // Pago HOJE pelo botão Pagar (saídas lançadas de contas, no dia de hoje).
-  const dLoc = ts => { const dt=new Date(ts||0); return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0"); };
-  const pagasHoje = obj2arr(STATE.saidas).filter(s=>s.status!=="descartado" && s.origem==="conta" && daLoja(s) && (dLoc(s.criadoEm)===hoje || (s.data||"")===hoje)).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  const pagasHoje = obj2arr(STATE.saidas).filter(s=>s.status!=="descartado" && s.origem==="conta" && daLoja(s) && (s.data||"")===hoje).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
   const totHoje = pagasHoje.reduce((a,s)=>a+num(s.valor),0);
   const cardPagoHoje = `<div class="card" style="margin-top:14px"><div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3>✅ Pago hoje (${fmtData(hoje)})</h3><span class="small muted">total <b class="neg">${reais(totHoje)}</b> · ${pagasHoje.length} pagamento(s)</span></div><div class="bd">
     ${pagasHoje.length? `<table><thead><tr><th>Descrição</th><th>Loja</th><th>Categoria</th><th class="r">Valor</th></tr></thead><tbody>${
