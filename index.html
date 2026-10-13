@@ -1996,7 +1996,16 @@ function renderCalendario(el){
       ` : `<div class="empty">Nada previsto para este dia.</div>`}
     </div></div>`;
   }
-  el.innerHTML=`<div class="card"><div class="hd"><h3>📅 Calendário — ${fmtMesLabel(ym)}</h3><p>Vermelho = a pagar · Verde = a receber. Use o seletor de mês no topo para navegar.</p></div><div class="bd">${grid}</div></div>${detalhe}`;
+  // Pago HOJE pelo botão Pagar (saídas lançadas de contas, no dia de hoje).
+  const dLoc = ts => { const dt=new Date(ts||0); return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0"); };
+  const pagasHoje = obj2arr(STATE.saidas).filter(s=>s.status!=="descartado" && s.origem==="conta" && daLoja(s) && (dLoc(s.criadoEm)===hoje || (s.data||"")===hoje)).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  const totHoje = pagasHoje.reduce((a,s)=>a+num(s.valor),0);
+  const cardPagoHoje = `<div class="card" style="margin-top:14px"><div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3>✅ Pago hoje (${fmtData(hoje)})</h3><span class="small muted">total <b class="neg">${reais(totHoje)}</b> · ${pagasHoje.length} pagamento(s)</span></div><div class="bd">
+    ${pagasHoje.length? `<table><thead><tr><th>Descrição</th><th>Loja</th><th>Categoria</th><th class="r">Valor</th></tr></thead><tbody>${
+      pagasHoje.map(s=>`<tr><td>${esc(s.descricao||"—")}</td><td><span class="pill">${esc(lojaNome(s.loja))}</span></td><td class="muted">${catLabel(s.categoria)}</td><td class="r neg"><b>${reais(s.valor)}</b></td></tr>`).join("")
+    }</tbody></table>`:`<div class="empty">Nenhuma conta paga hoje pelo botão Pagar.</div>`}
+  </div></div>`;
+  el.innerHTML=`<div class="card"><div class="hd"><h3>📅 Calendário — ${fmtMesLabel(ym)}</h3><p>Vermelho = a pagar · Verde = a receber. Use o seletor de mês no topo para navegar.</p></div><div class="bd">${grid}</div></div>${cardPagoHoje}${detalhe}`;
 }
 
 /* ===================== CATEGORIAS ======================================= */
