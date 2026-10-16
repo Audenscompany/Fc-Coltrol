@@ -345,7 +345,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{}, wppConfig:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{}, wppConfig:{}, listaCompras:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -2123,16 +2123,52 @@ function renderPrecificacao(el){
   document.getElementById("pgSub").textContent = `Precificação de ${lojaNome(loja)} · CMV, markup e preço sugerido (cardápio e iFood).`;
   const nPend = itensCustoPendentes().length;
   const lblAtu = "Atualizar custos" + (nPend? ` <span class="badge b-red">${nPend}</span>` : "");
-  const abas = [["precos","Tabela de preços"],["produtos","Produtos"],["insumos","Insumos"],["atualizar",lblAtu],["parametros","Parâmetros"],["importar","Importar Excel"]];
+  const abas = [["precos","Tabela de preços"],["produtos","Produtos"],["insumos","Insumos"],["atualizar",lblAtu],["compras","Lista de compras"],["parametros","Parâmetros"],["importar","Importar Excel"]];
   el.innerHTML = `<div class="tabs">${abas.map(([id,l])=>`<button class="${id===abaPrec?'active':''}" onclick="abaPrec='${id}';render()">${l}</button>`).join("")}</div><div id="abaConteudo"></div>`;
   const c = document.getElementById("abaConteudo");
   if(abaPrec==="precos") return precAbaPrecos(c);
   if(abaPrec==="produtos") return precAbaProdutos(c);
   if(abaPrec==="insumos") return precAbaInsumos(c);
   if(abaPrec==="atualizar") return precAbaAtualizar(c);
+  if(abaPrec==="compras") return precAbaCompras(c);
   if(abaPrec==="parametros") return precAbaParametros(c);
   if(abaPrec==="importar") return precAbaImportar(c);
 }
+/* ----- Lista de compras: estimativa de preço pelos custos atuais dos insumos --- */
+function precAbaCompras(c){
+  const loja=lojaPrecAtual();
+  const ins=insumosDaLoja(loja).sort((a,b)=>(a.nome||"").localeCompare(b.nome||""));
+  const itens=obj2arr(STATE.listaCompras).filter(x=>(x.loja||"")===loja);
+  const estItem=x=>{ const i=STATE.insumos[x.insumoId]; return i? num(x.qtd)*custoUnitario(i) : 0; };
+  const total=itens.reduce((s,x)=>s+estItem(x),0);
+  const optIns=ins.map(i=>`<option value="${i._id}">${esc(i.nome)} (${esc(i.unidade||"un")} · ${reais(custoUnitario(i))}/${esc(i.unidade||"un")})</option>`).join("");
+  c.innerHTML=`
+  <div class="card"><div class="hd"><h3>Adicionar item à lista</h3><p>Escolha o insumo e a quantidade — a estimativa usa o <b>custo atual</b> de cada insumo (atualizado pelos comprovantes do WhatsApp em "Atualizar custos").</p></div><div class="bd">
+    <div class="row">
+      <div style="flex:2"><label class="f">Insumo</label><select id="lc_ins">${optIns||`<option value="">— nenhum insumo cadastrado —</option>`}</select></div>
+      <div><label class="f">Quantidade</label><input id="lc_qtd" inputmode="decimal" placeholder="ex.: 1000"></div>
+      <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="addItemCompra()">Adicionar</button></div>
+    </div>
+    <div class="small muted" style="margin-top:6px">A quantidade é na <b>unidade do insumo</b> (g, ml, un…). Ex.: se a carne está em gramas, informe em gramas.</div>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3>Lista de compras — ${esc(lojaNome(loja))}</h3><span class="small muted">estimativa total <b class="neg">${reais(total)}</b> · ${itens.length} item(ns) ${itens.length?`· <a class="linkmais" onclick="limparListaCompras('${loja}')">limpar lista</a>`:""}</span></div><div class="bd">
+    ${itens.length?`<table><thead><tr><th>Insumo</th><th class="r">Qtd</th><th>Un.</th><th class="r">Custo unit.</th><th class="r">Estimativa</th><th></th></tr></thead><tbody>${
+      itens.sort((a,b)=>(a.nome||"").localeCompare(b.nome||"")).map(x=>{const i=STATE.insumos[x.insumoId]; const cu=i?custoUnitario(i):0; return `<tr>
+        <td><b>${esc(x.nome||(i?i.nome:"—"))}</b>${i?"":' <span class="badge b-gold">insumo removido</span>'}</td>
+        <td class="r"><input class="precoEdit" style="width:90px;text-align:right" inputmode="decimal" value="${String(x.qtd).replace('.',',')}" onblur="salvarQtdCompra('${x._id}',this.value)"></td>
+        <td>${esc((i&&i.unidade)||x.unidade||"un")}</td>
+        <td class="r muted">${reais(cu)}</td>
+        <td class="r"><b>${reais(estItem(x))}</b></td>
+        <td class="r"><button class="btn ghost sm" onclick="removerItemCompra('${x._id}')">remover</button></td>
+      </tr>`;}).join("")
+    }<tr style="border-top:2px solid var(--ink)"><td colspan="4"><b>Estimativa total</b></td><td class="r"><b class="neg">${reais(total)}</b></td><td></td></tr></tbody></table>
+    <div class="small muted" style="margin-top:8px">É uma <b>estimativa</b> pelos custos atuais — o valor real pode variar na nota. Mande o comprovante no WhatsApp e aprove em <a class="linkmais" onclick="abaPrec='atualizar';render()">Atualizar custos</a> para manter os custos em dia.</div>`:`<div class="empty">Lista vazia. Adicione insumos acima para estimar o valor da compra.</div>`}
+  </div></div>`;
+}
+function addItemCompra(){ const loja=lojaPrecAtual(); const insumoId=val("lc_ins"); if(!insumoId) return toast("Escolha um insumo."); const i=STATE.insumos[insumoId]; const qtd=num(val("lc_qtd")); if(qtd<=0) return toast("Informe a quantidade."); DB.push("listaCompras",{loja,insumoId,nome:i?i.nome:"",unidade:i?i.unidade:"un",qtd,criadoEm:Date.now()}); toast("Item adicionado à lista."); }
+function salvarQtdCompra(id,v){ DB.update("listaCompras/"+id,{qtd:num(v)}); }
+function removerItemCompra(id){ DB.remove("listaCompras/"+id); }
+function limparListaCompras(loja){ if(!confirm("Limpar toda a lista de compras desta loja?")) return; obj2arr(STATE.listaCompras).filter(x=>(x.loja||"")===loja).forEach(x=>DB.remove("listaCompras/"+x._id)); toast("Lista limpa."); }
 /* ---- Atualização de custos vinda dos comprovantes (WhatsApp) ------------- */
 function podeAprovarCusto(){ return ehGestor() || temAcesso("saidas"); }
 function revItens(r){ return Object.entries(r.itens||{}).map(([k,v])=>({idx:k, ...v})); }
@@ -3685,6 +3721,7 @@ function boot(){
   bind("colabPagto","colabPagto");
   bind("assinaturas","assinaturas");
   bind("assinPagtos","assinPagtos");
+  bind("listaCompras","listaCompras");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
