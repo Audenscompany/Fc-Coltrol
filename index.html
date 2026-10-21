@@ -1921,10 +1921,11 @@ function salariosProgramadosDoDia(iso){
   const conta = reg && reg.contaId ? STATE.contas[reg.contaId] : null;
   if(conta) return [];                  // já existe conta gerada (ou paga) → não duplica
   const total = pagamentoCiclo(ini, cicloFim(ini)).reduce((s,p)=>s+p.total,0);
-  if(total<=0) return [];
+  const falta = total - pagoCicloTotal(ini);   // abate quem já foi pago individualmente
+  if(falta<=0) return [];
   const loja=LOJAS[0].id;
   if(!(lojaFiltro==="todos"||lojaFiltro===loja)) return [];
-  return [{ _id:"salprog_"+ini, virtual:true, cicloIni:ini, descricao:"Salário colaboradores (previsto)", valor:total, categoria:"SALARIOS", loja }];
+  return [{ _id:"salprog_"+ini, virtual:true, cicloIni:ini, descricao:"Salário colaboradores (previsto)", valor:falta, categoria:"SALARIOS", loja }];
 }
 function btnContaAcao(c){
   return c.virtual
@@ -3043,18 +3044,35 @@ function baixarPdfColab(){
 /* ----- Marcar colaborador como já pago no ciclo ---------------------------- */
 // chave estável por ciclo + colaborador (Firebase não aceita . # $ [ ] / nem |)
 function pagoKey(ini, nome, lista){ return ini+"__"+chaveColab(nome,lista).replace(/[^A-Za-z0-9]/g,"_"); }
+// Soma do que já foi marcado como pago (individualmente) nesse ciclo.
+function pagoCicloTotal(ini){
+  const lista=obj2arr(STATE.colaboradores);
+  return pagamentoCiclo(ini,cicloFim(ini)).reduce((s,p)=>s+((STATE.colabPago&&STATE.colabPago[pagoKey(ini,p.nome,lista)])?p.total:0),0);
+}
 function marcarColabPago(ini, pk, nome, total){
   total=num(total); if(total<=0) return toast("Valor zerado — nada a pagar.");
   nome=String(nome||"").trim();
   const sid=DB.push("caixa/saidas",{data:hojeISO(),valor:total,categoria:"SALARIOS",grupo:grupoDe("SALARIOS"),fornecedor:nome||null,descricao:"Pagamento "+nome+" — ciclo "+cicloLabel(ini),status:"confirmado",origem:"colab-pago",loja:lojaPadrao(),criadoEm:Date.now()});
   DB.set("colabPago/"+pk,{nome,total,saidaId:sid||null,ini,em:Date.now(),loja:lojaPadrao()});
+  // se já existe a conta a pagar do ciclo (a que aparece no calendário), abate o valor desta pessoa
+  ajustarContaColabDelta(ini, -total);
   toast(nome+" marcado como pago e lançado no caixa.");
 }
 function desfazerColabPago(pk){
   const r=STATE.colabPago&&STATE.colabPago[pk]; if(!r) return;
   if(r.saidaId) DB.remove("caixa/saidas/"+r.saidaId);
   DB.remove("colabPago/"+pk);
+  // devolve o valor desta pessoa na conta a pagar do ciclo
+  ajustarContaColabDelta(r.ini, +num(r.total));
   toast("Pagamento desfeito.");
+}
+// Ajusta o valor da conta a pagar do ciclo (se existir e não estiver paga) somando o delta.
+function ajustarContaColabDelta(ini, delta){
+  const reg=STATE.colabPagto&&STATE.colabPagto[ini]; if(!reg||!reg.contaId) return;
+  const conta=STATE.contas[reg.contaId]; if(!conta||conta.status==="paga") return;
+  const nv=Math.max(0, num(conta.valor)+num(delta));
+  DB.update("contas/"+reg.contaId,{valor:nv});
+  DB.update("colabPagto/"+ini,{valor:nv});
 }
 function colabPagamentos(c){
   if(!cicloRef) cicloRef=cicloInicio(hojeISO());
@@ -3086,7 +3104,7 @@ function colabPagamentos(c){
     <div class="stat"><div class="lbl">Já pago no ciclo</div><div class="val" style="color:var(--green,#1d6b1b)">${reais(totPago)}</div></div>
     <div class="stat"><div class="lbl">Falta pagar</div><div class="val neg">${reais(totFalta)}</div></div>
   </div>`:""}
-  ${cardContaColab(ini, totalGeral)}
+  ${cardContaColab(ini, totFalta)}
   ${cardFolhaCLT()}
   ${naoCad?`<div class="alert amber" style="margin-bottom:12px"><div><div class="at">${naoCad} pessoa(s) do salão sem cadastro</div><div class="ad">Cadastre em "Cadastro" para definir a diária e marcar carteira assinada (sem cadastro, a diária fica R$ 0).</div></div><button class="btn ghost sm" onclick="abaColab='cadastro';render()">Cadastro</button></div>`:""}
   <div class="card"><div class="hd"><h3>A pagar no ciclo</h3><p>Salão/cozinha: diária (exceto CLT) + rateio da taxa de serviço. Motoboys: valor do dia.</p></div><div class="bd">
@@ -3159,7 +3177,7 @@ function cardContaColab(ini, total){
   let corpo;
   if(!existe){
     corpo = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-      <div><div><b>Pagamento em ${fmtData(venc)}</b> · total ${reais(total)}</div>
+      <div><div><b>Pagamento em ${fmtData(venc)}</b> · a pagar ${reais(total)}</div>
       <div class="small muted">Cria uma conta a pagar com vencimento na data do pagamento. A aprovação (virar saída) é feita em Contas a pagar.</div></div>
       ${podePagarColab()? `<button class="btn" onclick="gerarContaColab('${ini}',${total})">Gerar conta a pagar</button>`
         : `<span class="badge b-gray">só gestor/financeiro gera</span>`}</div>`;
