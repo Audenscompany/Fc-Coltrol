@@ -345,7 +345,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{}, wppConfig:{}, listaCompras:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, colabPago:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{}, wppConfig:{}, listaCompras:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -3040,14 +3040,34 @@ function baixarPdfColab(){
   win.document.write(doc); win.document.close(); win.focus();
   setTimeout(()=>{ try{ win.print(); }catch(_){} }, 500);
 }
+/* ----- Marcar colaborador como já pago no ciclo ---------------------------- */
+// chave estável por ciclo + colaborador (Firebase não aceita . # $ [ ] / nem |)
+function pagoKey(ini, nome, lista){ return ini+"__"+chaveColab(nome,lista).replace(/[^A-Za-z0-9]/g,"_"); }
+function marcarColabPago(ini, pk, nome, total){
+  total=num(total); if(total<=0) return toast("Valor zerado — nada a pagar.");
+  nome=String(nome||"").trim();
+  const sid=DB.push("caixa/saidas",{data:hojeISO(),valor:total,categoria:"SALARIOS",grupo:grupoDe("SALARIOS"),fornecedor:nome||null,descricao:"Pagamento "+nome+" — ciclo "+cicloLabel(ini),status:"confirmado",origem:"colab-pago",loja:lojaPadrao(),criadoEm:Date.now()});
+  DB.set("colabPago/"+pk,{nome,total,saidaId:sid||null,ini,em:Date.now(),loja:lojaPadrao()});
+  toast(nome+" marcado como pago e lançado no caixa.");
+}
+function desfazerColabPago(pk){
+  const r=STATE.colabPago&&STATE.colabPago[pk]; if(!r) return;
+  if(r.saidaId) DB.remove("caixa/saidas/"+r.saidaId);
+  DB.remove("colabPago/"+pk);
+  toast("Pagamento desfeito.");
+}
 function colabPagamentos(c){
   if(!cicloRef) cicloRef=cicloInicio(hojeISO());
   const ini=cicloRef, fim=cicloFim(ini), hoje=hojeISO();
   const emAndamento = hoje>=ini && hoje<=fim;
+  const lista=obj2arr(STATE.colaboradores);
   const linhas=pagamentoCiclo(ini,fim);
+  const estaPago=p=>!!(STATE.colabPago&&STATE.colabPago[pagoKey(ini,p.nome,lista)]);
   const totalGeral=linhas.reduce((s,p)=>s+p.total,0);
   const totSalao=linhas.filter(p=>p.tipo==="salao").reduce((s,p)=>s+p.total,0);
   const totMoto=linhas.filter(p=>p.tipo==="motoboy").reduce((s,p)=>s+p.total,0);
+  const totPago=linhas.filter(estaPago).reduce((s,p)=>s+p.total,0);
+  const totFalta=totalGeral-totPago;
   const naoCad=linhas.filter(p=>!p.cadastrado && p.tipo==="salao").length;
   c.innerHTML=`
   <div class="card" style="margin-bottom:14px"><div class="bd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
@@ -3062,13 +3082,19 @@ function colabPagamentos(c){
     <div class="stat"><div class="lbl">Salão/Cozinha</div><div class="val">${reais(totSalao)}</div></div>
     <div class="stat"><div class="lbl">Motoboys</div><div class="val">${reais(totMoto)}</div></div>
   </div>
+  ${totPago>0?`<div class="grid g2" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">Já pago no ciclo</div><div class="val" style="color:var(--green,#1d6b1b)">${reais(totPago)}</div></div>
+    <div class="stat"><div class="lbl">Falta pagar</div><div class="val neg">${reais(totFalta)}</div></div>
+  </div>`:""}
   ${cardContaColab(ini, totalGeral)}
   ${cardFolhaCLT()}
   ${naoCad?`<div class="alert amber" style="margin-bottom:12px"><div><div class="at">${naoCad} pessoa(s) do salão sem cadastro</div><div class="ad">Cadastre em "Cadastro" para definir a diária e marcar carteira assinada (sem cadastro, a diária fica R$ 0).</div></div><button class="btn ghost sm" onclick="abaColab='cadastro';render()">Cadastro</button></div>`:""}
   <div class="card"><div class="hd"><h3>A pagar no ciclo</h3><p>Salão/cozinha: diária (exceto CLT) + rateio da taxa de serviço. Motoboys: valor do dia.</p></div><div class="bd">
-    ${linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Desconto</th><th class="r">Total</th></tr></thead><tbody>${
-      linhas.map(p=>`<tr><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}${(!p.cadastrado&&p.tipo==="salao")?' <span class="badge b-gold">cadastrar</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('<span class="neg">-'+reais(p.desc)+'</span>'):"—"}</td><td class="r"><b>${reais(p.total)}</b></td></tr>`).join("")
-    }<tr style="border-top:2px solid var(--ink)"><td colspan="7"><b>Total do ciclo</b></td><td class="r"><b class="neg">${reais(totalGeral)}</b></td></tr></tbody></table>`:`<div class="empty">Nenhum dia lançado neste ciclo. Os dias entram automaticamente pelo grupo de caixa, ou você lança em "Dias lançados".</div>`}
+    ${linhas.length?`<table><thead><tr><th>Colaborador</th><th>Tipo</th><th class="r">Dias</th><th class="r">Diária</th><th class="r">Taxa serv.</th><th class="r">Motoboy</th><th class="r">Desconto</th><th class="r">Total</th><th class="r">Pago</th></tr></thead><tbody>${
+      linhas.map(p=>{ const pk=pagoKey(ini,p.nome,lista); const pago=estaPago(p); const nomeJS=esc(p.nome).replace(/'/g,"\\'");
+        return `<tr${pago?' style="opacity:.55"':''}><td>${esc(p.nome)}${p.clt?' <span class="badge b-gray">CLT</span>':''}${(!p.cadastrado&&p.tipo==="salao")?' <span class="badge b-gold">cadastrar</span>':''}${pago?' <span class="badge b-green">pago</span>':''}</td><td class="muted">${p.tipo==="motoboy"?"Motoboy":"Salão/Cozinha"}</td><td class="r">${p.dias}</td><td class="r">${p.diaria?reais(p.diaria):"—"}</td><td class="r">${p.taxa?reais(p.taxa):"—"}</td><td class="r">${p.moto?reais(p.moto):"—"}</td><td class="r">${p.desc?('<span class="neg">-'+reais(p.desc)+'</span>'):"—"}</td><td class="r"><b${pago?' style="text-decoration:line-through"':''}>${reais(p.total)}</b></td><td class="r" style="white-space:nowrap">${pago?`<button class="btn ghost sm" onclick="desfazerColabPago('${pk}')">desfazer</button>`:`<button class="btn sm" onclick="marcarColabPago('${ini}','${pk}','${nomeJS}',${p.total})">pago</button>`}</td></tr>`; }).join("")
+    }<tr style="border-top:2px solid var(--ink)"><td colspan="7"><b>Total do ciclo</b></td><td class="r"><b class="neg">${reais(totalGeral)}</b></td><td></td></tr></tbody></table>
+    <p class="muted" style="margin-top:8px;font-size:12px">Marcar <b>pago</b> lança uma saída no caixa (categoria Salários) com a data de hoje. Use quando já transferiu o PIX da pessoa. Para desfazer, a saída é removida.</p>`:`<div class="empty">Nenhum dia lançado neste ciclo. Os dias entram automaticamente pelo grupo de caixa, ou você lança em "Dias lançados".</div>`}
   </div></div>`;
 }
 /* ----- Folha CLT (mensal): paga no 5º dia útil, vira conta a pagar ---------- */
@@ -3719,6 +3745,7 @@ function boot(){
   bind("estoqueCont","estoqueCont");
   bind("custoRev","custoRev");
   bind("colabPagto","colabPagto");
+  bind("colabPago","colabPago");
   bind("assinaturas","assinaturas");
   bind("assinPagtos","assinPagtos");
   bind("listaCompras","listaCompras");
