@@ -1288,7 +1288,7 @@ function renderContas(el){
       <div><label class="f">Categoria</label><select id="c_cat">${optCat}</select></div>
       <div><label class="f">Fornecedor (opcional)</label><input id="c_forn" list="fornListC" placeholder="Nenhum"><datalist id="fornListC">${fornecedores.map(f=>`<option value="${esc(f)}">`).join("")}</datalist></div>
       <div><label class="f">Estabelecimento</label><select id="c_loja" onchange="document.getElementById('c_rateio').style.display=this.value==='__ambas'?'flex':'none'">${optLoja}<option value="__ambas">Ambas (dividir)</option></select></div>
-      <div><label class="f">Repetir</label><select id="c_rec"><option value="nenhuma">Não repete</option><option value="semanal">Toda semana</option><option value="quinzenal">A cada 15 dias</option><option value="mensal">Todo mês</option></select></div>
+      <div><label class="f">Repetir</label><select id="c_rec"><option value="nenhuma">Não repete</option><option value="diaria">Todo dia</option><option value="semanal">Toda semana</option><option value="quinzenal">A cada 15 dias</option><option value="mensal">Todo mês</option></select></div>
     </div>
     <div class="row" id="c_rateio" style="margin-top:10px;display:none;background:#f3effb;border:1px solid #e3d9f7;border-radius:10px;padding:10px">
       <div style="flex:1 1 100%;font-size:12px;color:#5b2bb0;font-weight:700">Rateio entre as lojas — % do valor para cada uma (precisa somar 100%)</div>
@@ -1346,6 +1346,7 @@ function pagarConta(id, dataPag){
   toast("Conta paga e lançada no caixa.");
 }
 function proximaDataRec(iso, rec){
+  if(rec==="diaria") return maisDias(iso||hojeISO(),1);
   if(rec==="semanal") return maisDias(iso||hojeISO(),7);
   if(rec==="quinzenal") return maisDias(iso||hojeISO(),15);
   if(rec==="mensal") return proximoMesISO(iso);
@@ -1367,7 +1368,7 @@ function gerarProximasRec(id){
   }
   toast(criadas? (criadas+" próxima(s) ocorrência(s) criada(s).") : "As próximas já estavam criadas.");
 }
-function recLabel(rec){ return rec==="semanal"?"semanal":rec==="quinzenal"?"15 em 15 dias":rec==="mensal"?"mensal":""; }
+function recLabel(rec){ return rec==="diaria"?"diária":rec==="semanal"?"semanal":rec==="quinzenal"?"15 em 15 dias":rec==="mensal"?"mensal":""; }
 let contaEditId=null;
 function editarContaInicio(id){ contaEditId=id; render(); }
 function linhaEdicaoConta(c){
@@ -1380,7 +1381,7 @@ function linhaEdicaoConta(c){
     <div class="row" style="margin-top:10px">
       <div><label class="f">Categoria</label><select id="ec_cat_${c._id}">${optCategorias(c.categoria)}</select></div>
       <div><label class="f">Fornecedor</label><input id="ec_forn_${c._id}" value="${esc(c.fornecedor||'')}"></div>
-      <div><label class="f">Repetir</label><select id="ec_rec_${c._id}"><option value="nenhuma"${(!c.recorrencia||c.recorrencia==='nenhuma')?' selected':''}>Não repete</option><option value="semanal"${c.recorrencia==='semanal'?' selected':''}>Toda semana</option><option value="quinzenal"${c.recorrencia==='quinzenal'?' selected':''}>A cada 15 dias</option><option value="mensal"${c.recorrencia==='mensal'?' selected':''}>Todo mês</option></select></div>
+      <div><label class="f">Repetir</label><select id="ec_rec_${c._id}"><option value="nenhuma"${(!c.recorrencia||c.recorrencia==='nenhuma')?' selected':''}>Não repete</option><option value="diaria"${c.recorrencia==='diaria'?' selected':''}>Todo dia</option><option value="semanal"${c.recorrencia==='semanal'?' selected':''}>Toda semana</option><option value="quinzenal"${c.recorrencia==='quinzenal'?' selected':''}>A cada 15 dias</option><option value="mensal"${c.recorrencia==='mensal'?' selected':''}>Todo mês</option></select></div>
     </div>
     <div style="margin-top:10px;display:flex;gap:8px">
       <button class="btn sm" onclick="salvarEdicaoConta('${c._id}')">Salvar</button>
