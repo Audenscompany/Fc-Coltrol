@@ -2799,15 +2799,16 @@ function renderDividasNegociadas(el){
     <div class="stat"><div class="lbl">Comprometido este mês</div><div class="val">${reais(parcelasDividaAbertoMes(mesAtual()))}</div></div>
   </div>
   <div class="card" style="margin-bottom:14px"><div class="hd"><h3>Progresso dos acordos</h3><p>Quanto já foi pago e quanto falta em cada dívida negociada.</p></div><div class="bd">
-    <table><thead><tr><th>Dívida</th><th class="r">Parcelas</th><th class="r">Pago</th><th class="r">Falta</th><th style="width:220px">Progresso</th><th>Próx. venc.</th></tr></thead><tbody>${
-      linhas.map(l=>{const pct=l.valorTotal?Math.round(l.valorPago/l.valorTotal*100):0; return `<tr>
+    <table><thead><tr><th>Dívida</th><th class="r">Parcelas</th><th class="r">Pago</th><th class="r">Falta</th><th style="width:220px">Progresso</th><th>Próx. venc.</th><th></th></tr></thead><tbody>${
+      linhas.map(l=> l.d._id===dividaEditId ? linhaEdicaoDivida(l.d) : l.d._id===dividaNegId ? linhaNegociarDivida(l.d) : (()=>{const pct=l.valorTotal?Math.round(l.valorPago/l.valorTotal*100):0; return `<tr>
         <td><b>${esc(l.d.categoria)}</b> <span class="pill">${esc(lojaNome(l.d.loja))}</span></td>
         <td class="r">${l.pagas}/${l.total}</td>
         <td class="r pos">${reais(l.valorPago)}</td>
         <td class="r neg">${reais(l.aberto)}</td>
         <td><div style="background:#eee;border-radius:8px;height:14px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--purple,#6b3fa0)"></div></div><div class="small muted" style="text-align:right">${pct}%</div></td>
         <td>${l.prox?fmtData(l.prox.vencimento):'<span class="muted">—</span>'}</td>
-      </tr>`;}).join("")
+        <td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="editarDividaInicio('${l.d._id}')">editar</button></td>
+      </tr>`;})()).join("")
     }</tbody></table>
   </div></div>
   <div class="card"><div class="hd"><h3>Projeção mês a mês</h3><p>Valor das parcelas em aberto por mês. A seta mostra se o comprometimento sobe ou cai em relação ao mês anterior.</p></div><div class="bd">
