@@ -2557,6 +2557,10 @@ function linhaEdicaoDivida(d){
         <div><label class="f">Frequência</label><select id="ed_fr_${d._id}"><option value="mensal"${freq==="mensal"?" selected":""}>Mensal</option><option value="quinzenal"${freq==="quinzenal"?" selected":""}>Quinzenal</option><option value="semanal"${freq==="semanal"?" selected":""}>Semanal</option></select></div>
         <div><label class="f">Categoria (DRE)</label><select id="ed_cs_${d._id}">${optCategorias(d.categoriaSaida)}</select></div>
       </div>
+      <div class="row" style="margin-top:10px">
+        <div><label class="f">Valor de cada parcela (R$)</label><input id="ed_vp_${d._id}" inputmode="decimal" placeholder="opcional — ex.: 750,00"></div>
+        <div style="flex:3;align-self:flex-end"><div class="small muted">Preencha para fixar o valor de cada parcela em aberto (ex.: mudar de R$ 500 para R$ 750). Deixe vazio para dividir o valor total pelo nº de parcelas.</div></div>
+      </div>
       <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px"><input type="checkbox" id="ed_refazer_${d._id}" style="width:18px;height:18px"> Regerar as parcelas em aberto com estes valores (apaga as em aberto e recria; as já pagas ficam)</label>
     </div>`:""}
     <div style="margin-top:10px;display:flex;gap:8px">
@@ -2576,18 +2580,24 @@ function salvarEdicaoDivida(id){
     const freq=val("ed_fr_"+id)||"mensal";
     patch.totalParcelas=n; patch.parcelasPagas=pagas; patch.frequencia=freq; patch.categoriaSaida=val("ed_cs_"+id)||d.categoriaSaida;
     if(refazer){
+      const valParc=num(val("ed_vp_"+id));            // valor fixo por parcela (opcional)
       const total=num(val("ed_val_"+id))||num(d.valor);
       const venc1=val("ed_v1_"+id)||hojeISO();
       const cat=patch.categoriaSaida;
       const desc=patch.categoria;
+      const abertasAntes=n-pagas;
       // apaga as parcelas em aberto (mantém as pagas)
       obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId && c.status!=="paga").forEach(c=>DB.remove("contas/"+c._id));
       // recria as parcelas de (pagas+1) até n
       let acum=0;
-      for(let k=1;k<=n;k++){ const p=k===n?Math.round((total-acum)*100)/100:Math.round(total/n*100)/100; acum+=p;
+      for(let k=1;k<=n;k++){
+        // com valor fixo por parcela, toda parcela em aberto vale valParc; senão, divide o total pelo nº de parcelas
+        const p = valParc>0 ? valParc : (k===n?Math.round((total-acum)*100)/100:Math.round(total/n*100)/100);
+        acum+=p;
         if(k>pagas){ DB.push("contas",{descricao:desc+" — parcela "+k+"/"+n,valor:p,vencimento:vencParcela(venc1,freq,k-(pagas+1)),categoria:cat,grupo:grupoDe(cat),fornecedor:null,loja:d.loja,recorrencia:"nenhuma",status:"aberta",acordoId:d.acordoId,origem:"divida",criadoEm:Date.now()}); }
       }
-      patch.detalhe = "Negociada — "+n+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(total/n);
+      if(valParc>0){ patch.detalhe = "Negociada — "+abertasAntes+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(valParc)+" (em aberto)"; }
+      else { patch.detalhe = "Negociada — "+n+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(total/n); }
     }
   }
   DB.update("dividas/"+id,patch);
