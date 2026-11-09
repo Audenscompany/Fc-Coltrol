@@ -2043,7 +2043,7 @@ function renderCalendario(el){
                 <div><label class="f">Total a renegociar (R$)</label><input id="rn_total_${c._id}" inputmode="decimal" value="${c.valor!=null?String(c.valor).replace('.',','):''}"></div>
                 <div><label class="f">Nº de parcelas</label><input id="rn_n_${c._id}" inputmode="numeric" value="12"></div>
                 <div><label class="f">1º vencimento</label><input type="date" id="rn_v1_${c._id}" value="${(c.vencimento||hojeISO()).slice(0,10)}"></div>
-                <div><label class="f">Frequência</label><select id="rn_fr_${c._id}"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal</option><option value="semanal">Semanal</option></select></div>
+                <div><label class="f">Frequência</label><select id="rn_fr_${c._id}"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal</option><option value="semanal">Semanal</option><option value="diaria">Diária</option></select></div>
                 <div><label class="f">Categoria (DRE)</label><select id="rn_cs_${c._id}">${optCategorias(c.categoria)}</select></div>
               </div>
               <div class="small muted" style="margin-top:8px">Gera as parcelas em <b>Contas a pagar</b> e cria a dívida em <b>Dívidas negociadas</b>. A conta original é substituída pelo parcelamento.</div>
@@ -2607,7 +2607,7 @@ function linhaEdicaoDivida(d){
         <div><label class="f">Nº de parcelas</label><input id="ed_n_${d._id}" inputmode="numeric" value="${nParc}"></div>
         <div><label class="f">Parcelas já pagas</label><input id="ed_pg_${d._id}" inputmode="numeric" value="${pagas}"></div>
         <div><label class="f">1º venc. em aberto</label><input type="date" id="ed_v1_${d._id}" value="${venc1}"></div>
-        <div><label class="f">Frequência</label><select id="ed_fr_${d._id}"><option value="mensal"${freq==="mensal"?" selected":""}>Mensal</option><option value="quinzenal"${freq==="quinzenal"?" selected":""}>Quinzenal</option><option value="semanal"${freq==="semanal"?" selected":""}>Semanal</option></select></div>
+        <div><label class="f">Frequência</label><select id="ed_fr_${d._id}"><option value="mensal"${freq==="mensal"?" selected":""}>Mensal</option><option value="quinzenal"${freq==="quinzenal"?" selected":""}>Quinzenal</option><option value="semanal"${freq==="semanal"?" selected":""}>Semanal</option><option value="diaria"${freq==="diaria"?" selected":""}>Diária</option></select></div>
         <div><label class="f">Categoria (DRE)</label><select id="ed_cs_${d._id}">${optCategorias(d.categoriaSaida)}</select></div>
       </div>
       <div class="row" style="margin-top:10px">
@@ -2663,8 +2663,8 @@ function addMesesISO(iso,m){ const d=new Date((iso||hojeISO())+"T00:00:00"); con
 // Soma dias a uma data ISO (para frequências semanal/quinzenal).
 function addDiasISO(iso,dias){ const d=new Date((iso||hojeISO())+"T00:00:00"); d.setDate(d.getDate()+dias); return d.toISOString().slice(0,10); }
 // Vencimento da k-ésima parcela (k a partir de 0) conforme a frequência.
-function vencParcela(venc,freq,k){ if(freq==="semanal") return addDiasISO(venc,7*k); if(freq==="quinzenal") return addDiasISO(venc,14*k); return addMesesISO(venc,k); }
-const FREQ_LABEL={mensal:"mensal",quinzenal:"quinzenal",semanal:"semanal"};
+function vencParcela(venc,freq,k){ if(freq==="diaria") return addDiasISO(venc,k); if(freq==="semanal") return addDiasISO(venc,7*k); if(freq==="quinzenal") return addDiasISO(venc,14*k); return addMesesISO(venc,k); }
+const FREQ_LABEL={diaria:"diária",mensal:"mensal",quinzenal:"quinzenal",semanal:"semanal"};
 // Info do acordo (parcelas): quantas pagas, total e saldo em aberto (contas ligadas por acordoId).
 function acordoInfo(d){ if(!d||!d.acordoId) return null; const cs=obj2arr(STATE.contas).filter(c=>c.acordoId===d.acordoId); if(!cs.length && !num(d.totalParcelas)) return null; const pagasReais=cs.filter(c=>c.status==="paga").length; const aberto=cs.filter(c=>c.status!=="paga").reduce((s,c)=>s+num(c.valor),0); const pagas=Math.max(pagasReais, num(d.parcelasPagas)||0); const total=num(d.totalParcelas)||cs.length; return {pagas,total,aberto}; }
 // Valor "vivo" da dívida: se for parcelada, o saldo das parcelas em aberto; senão o valor cadastrado.
@@ -2712,7 +2712,7 @@ function linhaNegociarDivida(d){
       <div><label class="f">Nº de parcelas</label><input id="ng_n_${d._id}" inputmode="numeric" value="12"></div>
       <div><label class="f">Parcelas já pagas</label><input id="ng_pg_${d._id}" inputmode="numeric" value="0"></div>
       <div><label class="f">1º vencimento</label><input type="date" id="ng_v1_${d._id}" value="${hojeISO()}"></div>
-      <div><label class="f">Frequência</label><select id="ng_fr_${d._id}"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal</option><option value="semanal">Semanal</option></select></div>
+      <div><label class="f">Frequência</label><select id="ng_fr_${d._id}"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal</option><option value="semanal">Semanal</option><option value="diaria">Diária</option></select></div>
       <div><label class="f">Categoria (DRE)</label><select id="ng_cs_${d._id}">${optCategorias(d.categoriaSaida||"IMPOSTOS_TAXAS")}</select></div>
     </div>
     <div class="small muted" style="margin-top:8px">Gera uma parcela por vencimento em <b>Contas a pagar</b> (entram no Fluxo e, ao pagar, no DRE). A dívida vira <b>Parcelada</b> e o saldo passa a ser o das parcelas em aberto.</div>
@@ -2791,7 +2791,7 @@ function renderDividas(el){
     <div class="row" style="margin-top:10px">
       <div><label class="f">Valor total negociado (R$)</label><input id="nd_total" inputmode="decimal" placeholder="0,00"></div>
       <div><label class="f">Nº de parcelas</label><input id="nd_parcelas" inputmode="numeric" placeholder="ex.: 12" value="12"></div>
-      <div><label class="f">Frequência</label><select id="nd_freq"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal (14 dias)</option><option value="semanal">Semanal (7 dias)</option></select></div>
+      <div><label class="f">Frequência</label><select id="nd_freq"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal (14 dias)</option><option value="semanal">Semanal (7 dias)</option><option value="diaria">Diária (1 dia)</option></select></div>
       <div><label class="f">1º vencimento</label><input type="date" id="nd_venc" value="${hojeISO()}"></div>
       <div style="flex:0"><label class="f">&nbsp;</label><button class="btn" onclick="criarDividaParcelada()">Gerar parcelas</button></div>
     </div>
