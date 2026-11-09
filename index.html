@@ -1959,10 +1959,17 @@ function cardSemanaDashboard(){
   </div></div>`;
 }
 let diaSelCal=null;
-let contaReprogId=null, contaValorId=null, contaPagId=null;
+let contaReprogId=null, contaValorId=null, contaPagId=null, contaRenegId=null;
 function pagarInicio(id){ contaPagId=id; contaReprogId=null; contaValorId=null; render(); }
 function confirmarPagamentoData(id){ const d=val("pg_"+id)||hojeISO(); contaPagId=null; pagarConta(id, d); }
 function reprogramarInicio(id){ contaReprogId=id; contaValorId=null; contaPagId=null; render(); }
+// Botão "renegociar" no calendário: se a conta já é parcela de um acordo, abre a edição do acordo;
+// senão, abre o formulário para transformar ESTA conta numa dívida parcelada.
+function renegociarCalendario(id){
+  const c=STATE.contas[id]; if(!c) return;
+  if(c.acordoId){ renegociarDoCalendario(id); return; }
+  contaRenegId=id; contaReprogId=null; contaValorId=null; contaPagId=null; render();
+}
 // Abre a renegociação da dívida ligada a esta parcela (vai para Dívidas negociadas e abre o form de edição).
 function renegociarDoCalendario(id){
   const c=STATE.contas[id]; if(!c) return;
@@ -1970,6 +1977,28 @@ function renegociarDoCalendario(id){
   if(!d){ toast("Esta conta não está ligada a uma dívida negociada."); return; }
   dividaNegId=null; dividaEditId=d._id;
   irPara('divneg');
+}
+// Transforma uma conta comum em dívida parcelada (negociada): cria a dívida + parcelas e remove a conta original.
+function salvarRenegociacaoConta(id){
+  const c=STATE.contas[id]; if(!c) return;
+  const loja=c.loja||lojaPadrao();
+  const total=num(val("rn_total_"+id)), n=Math.max(1,Math.round(num(val("rn_n_"+id))||1));
+  const venc1=val("rn_v1_"+id)||hojeISO(), freq=val("rn_fr_"+id)||"mensal";
+  const cat=val("rn_cs_"+id)||c.categoria||"OUTROS_OPERACIONAL";
+  const desc=val("rn_desc_"+id)||c.descricao||"Dívida";
+  if(total<=0) return toast("Informe o valor total a renegociar.");
+  // Monta as parcelas para checar teto antes de gravar.
+  let acum=0; const parcelas=[];
+  for(let k=1;k<=n;k++){ const p=k===n?Math.round((total-acum)*100)/100:Math.round(total/n*100)/100; acum+=p; parcelas.push({k,valor:p,venc:vencParcela(venc1,freq,k-1)}); }
+  const novoPorMes={}; parcelas.forEach(p=>{ const ym=(p.venc||"").slice(0,7); novoPorMes[ym]=(novoPorMes[ym]||0)+p.valor; });
+  const teto=tetoDividaLoja(loja);
+  if(teto>0){ const est=[]; Object.keys(novoPorMes).sort().forEach(ym=>{ const jaTem=obj2arr(STATE.contas).filter(x=>x.origem==="divida"&&(x.loja||"")===loja&&(x.vencimento||"").slice(0,7)===ym).reduce((s,x)=>s+num(x.valor),0); if(jaTem+novoPorMes[ym]>teto) est.push("• "+fmtMesLabel(ym)+": "+reais(jaTem+novoPorMes[ym])+" (teto "+reais(teto)+")"); }); if(est.length && !confirm("⚠️ Ultrapassa o teto mensal de "+lojaNome(loja)+":\n\n"+est.join("\n")+"\n\nCriar mesmo assim?")) return; }
+  const acordoId="ac"+Date.now();
+  DB.push("dividas",{loja,cnpj:cnpjLoja(loja),categoria:desc,detalhe:"Renegociada — "+n+"× "+(FREQ_LABEL[freq]||"mensal")+" de "+reais(total/n),valor:total,onde:"",prazo:"1º venc. "+fmtData(venc1),status:"Parcelada",origem:"negociada",acordoId,categoriaSaida:cat,frequencia:freq,totalParcelas:n,parcelasPagas:0,criadoEm:Date.now()});
+  parcelas.forEach(p=>DB.push("contas",{descricao:desc+" — parcela "+p.k+"/"+n,valor:p.valor,vencimento:p.venc,categoria:cat,grupo:grupoDe(cat),fornecedor:c.fornecedor||null,loja,recorrencia:"nenhuma",status:"aberta",acordoId,origem:"divida",criadoEm:Date.now()}));
+  DB.remove("contas/"+id);   // remove a conta original (virou parcelamento)
+  contaRenegId=null;
+  toast("Conta renegociada em "+n+" parcela(s) — virou dívida.");
 }
 function salvarReprograma(id){ const nv=val("rp_"+id); if(!nv) return toast("Escolha a nova data."); DB.update("contas/"+id,{vencimento:nv}); contaReprogId=null; toast("Conta reprogramada para "+fmtData(nv)+"."); }
 function editarValorInicio(id){ contaValorId=id; contaReprogId=null; render(); }
@@ -2006,7 +2035,23 @@ function renderCalendario(el){
           ? `<tr><td colspan="3">Novo valor de <b>${esc(c.descricao||"—")}</b>: <input id="ev_${c._id}" inputmode="decimal" style="width:130px" value="${c.valor!=null?String(c.valor).replace('.',','):''}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="salvarValorConta('${c._id}')">Salvar</button> <button class="btn ghost sm" onclick="contaValorId=null;render()">Cancelar</button></td></tr>`
           : c._id===contaPagId
           ? `<tr><td colspan="3">Pagar <b>${esc(c.descricao||"—")}</b> — data do pagamento: <input type="date" id="pg_${c._id}" value="${hojeISO()}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="confirmarPagamentoData('${c._id}')">Confirmar pagamento</button> <button class="btn ghost sm" onclick="contaPagId=null;render()">Cancelar</button></td></tr>`
-          : `<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="muted">${catLabel(c.categoria)}</td><td class="r neg"><b>${reais(c.valor)}</b></td><td class="r" style="white-space:nowrap">${c.virtual?btnContaAcao(c):`<button class="btn sm" onclick="pagarInicio('${c._id}')">Pagar</button> <button class="btn ghost sm" onclick="editarValorInicio('${c._id}')">valor</button> <button class="btn ghost sm" onclick="reprogramarInicio('${c._id}')">Reprogramar</button>${c.acordoId?` <button class="btn ghost sm" onclick="renegociarDoCalendario('${c._id}')">renegociar</button>`:""}`}</td></tr>`).join("")}</tbody></table>`:''}
+          : c._id===contaRenegId
+          ? `<tr><td colspan="4" style="background:#f3effb;border:1px solid #e3d9f7">
+              <div style="font-weight:700;color:var(--purple-d);margin-bottom:8px">💜 Renegociar como dívida: ${esc(c.descricao||"—")}</div>
+              <div class="row">
+                <div style="flex:2"><label class="f">Descrição da dívida</label><input id="rn_desc_${c._id}" value="${esc(c.descricao||'')}"></div>
+                <div><label class="f">Total a renegociar (R$)</label><input id="rn_total_${c._id}" inputmode="decimal" value="${c.valor!=null?String(c.valor).replace('.',','):''}"></div>
+                <div><label class="f">Nº de parcelas</label><input id="rn_n_${c._id}" inputmode="numeric" value="12"></div>
+                <div><label class="f">1º vencimento</label><input type="date" id="rn_v1_${c._id}" value="${(c.vencimento||hojeISO()).slice(0,10)}"></div>
+                <div><label class="f">Frequência</label><select id="rn_fr_${c._id}"><option value="mensal">Mensal</option><option value="quinzenal">Quinzenal</option><option value="semanal">Semanal</option></select></div>
+                <div><label class="f">Categoria (DRE)</label><select id="rn_cs_${c._id}">${optCategorias(c.categoria)}</select></div>
+              </div>
+              <div class="small muted" style="margin-top:8px">Gera as parcelas em <b>Contas a pagar</b> e cria a dívida em <b>Dívidas negociadas</b>. A conta original é substituída pelo parcelamento.</div>
+              <div style="margin-top:10px;display:flex;gap:8px">
+                <button class="btn sm" onclick="salvarRenegociacaoConta('${c._id}')">Gerar parcelas e renegociar</button>
+                <button class="btn ghost sm" onclick="contaRenegId=null;render()">Cancelar</button>
+              </div></td></tr>`
+          : `<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="muted">${catLabel(c.categoria)}</td><td class="r neg"><b>${reais(c.valor)}</b></td><td class="r" style="white-space:nowrap">${c.virtual?btnContaAcao(c):`<button class="btn sm" onclick="pagarInicio('${c._id}')">Pagar</button> <button class="btn ghost sm" onclick="editarValorInicio('${c._id}')">valor</button> <button class="btn ghost sm" onclick="reprogramarInicio('${c._id}')">Reprogramar</button>${c.virtual?"":` <button class="btn ghost sm" onclick="renegociarCalendario('${c._id}')">renegociar</button>`}`}</td></tr>`).join("")}</tbody></table>`:''}
         ${dd.receber.length?`<div class="small muted" style="margin:10px 0 4px">A receber</div><table><tbody>${dd.receber.map(c=>`<tr><td>${esc(c.descricao||"—")} <span class="pill">${esc(lojaNome(c.loja))}</span></td><td class="r pos"><b>${reais(c.valor)}</b></td><td class="r"><button class="btn sm" onclick="receberConta('${c._id}')">Receber</button></td></tr>`).join("")}</tbody></table>`:''}
       ` : `<div class="empty">Nada previsto para este dia.</div>`}
     </div></div>`;
