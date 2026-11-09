@@ -1332,16 +1332,29 @@ function addConta(){
   DB.push("contas",Object.assign({},base,{descricao,valor,loja}));
   toast("Conta adicionada.");
 }
-function pagarConta(id, dataPag){
+function pagarConta(id, dataPag, valorPag){
   const c=STATE.contas[id]; if(!c) return;
   const dpag = (dataPag && /^\d{4}-\d{2}-\d{2}$/.test(dataPag)) ? dataPag : hojeISO();
+  const totalConta = num(c.valor);
+  // valor efetivamente pago: o informado (pagamento parcial) ou o total da conta
+  let pago = (valorPag!=null && String(valorPag).trim()!=="") ? num(valorPag) : totalConta;
+  if(pago<=0) return toast("Informe um valor de pagamento válido.");
+  if(pago>totalConta) pago=totalConta;               // não paga mais que o saldo da conta
+  const parcial = pago < totalConta - 0.001;
   // vira uma saída no caixa, na data do pagamento (hoje por padrão; pode ser retroativa)
-  DB.push("caixa/saidas",{data:dpag,valor:num(c.valor),categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,descricao:(c.descricao||"Conta")+" (conta paga)",status:"confirmado",origem:"conta",loja:c.loja||lojaPadrao(),criadoEm:Date.now()});
+  DB.push("caixa/saidas",{data:dpag,valor:Math.round(pago*100)/100,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,descricao:(c.descricao||"Conta")+(parcial?" (pagamento parcial)":" (conta paga)"),status:"confirmado",origem:"conta",loja:c.loja||lojaPadrao(),criadoEm:Date.now()});
+  if(parcial){
+    // deixa o restante em aberto na mesma conta (só abate o que foi pago)
+    const resta=Math.round((totalConta-pago)*100)/100;
+    DB.update("contas/"+id,{valor:resta});
+    toast("Pago "+reais(pago)+". Restam "+reais(resta)+" nesta conta.");
+    return;
+  }
   DB.update("contas/"+id,{status:"paga",pagoEm:Date.now()});
   // recorrência: cria a próxima conta no intervalo configurado (só se ainda não existir)
   const prox=proximaDataRec(c.vencimento, c.recorrencia);
   if(prox && !existeRecorrente(c, prox)){
-    DB.push("contas",{descricao:c.descricao,valor:num(c.valor),vencimento:prox,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,loja:c.loja||lojaPadrao(),recorrencia:c.recorrencia,status:"aberta",origem:c.origem||"manual",criadoEm:Date.now()});
+    DB.push("contas",{descricao:c.descricao,valor:totalConta,vencimento:prox,categoria:c.categoria,grupo:grupoDe(c.categoria),fornecedor:c.fornecedor||null,loja:c.loja||lojaPadrao(),recorrencia:c.recorrencia,status:"aberta",origem:c.origem||"manual",criadoEm:Date.now()});
   }
   toast("Conta paga e lançada no caixa.");
 }
@@ -1961,7 +1974,7 @@ function cardSemanaDashboard(){
 let diaSelCal=null;
 let contaReprogId=null, contaValorId=null, contaPagId=null, contaRenegId=null;
 function pagarInicio(id){ contaPagId=id; contaReprogId=null; contaValorId=null; render(); }
-function confirmarPagamentoData(id){ const d=val("pg_"+id)||hojeISO(); contaPagId=null; pagarConta(id, d); }
+function confirmarPagamentoData(id){ const d=val("pg_"+id)||hojeISO(); const v=val("pgv_"+id); contaPagId=null; pagarConta(id, d, v); }
 function reprogramarInicio(id){ contaReprogId=id; contaValorId=null; contaPagId=null; render(); }
 // Botão "renegociar" no calendário: se a conta já é parcela de um acordo, abre a edição do acordo;
 // senão, abre o formulário para transformar ESTA conta numa dívida parcelada.
@@ -2034,7 +2047,7 @@ function renderCalendario(el){
           : c._id===contaValorId
           ? `<tr><td colspan="3">Novo valor de <b>${esc(c.descricao||"—")}</b>: <input id="ev_${c._id}" inputmode="decimal" style="width:130px" value="${c.valor!=null?String(c.valor).replace('.',','):''}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="salvarValorConta('${c._id}')">Salvar</button> <button class="btn ghost sm" onclick="contaValorId=null;render()">Cancelar</button></td></tr>`
           : c._id===contaPagId
-          ? `<tr><td colspan="3">Pagar <b>${esc(c.descricao||"—")}</b> — data do pagamento: <input type="date" id="pg_${c._id}" value="${hojeISO()}"></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="confirmarPagamentoData('${c._id}')">Confirmar pagamento</button> <button class="btn ghost sm" onclick="contaPagId=null;render()">Cancelar</button></td></tr>`
+          ? `<tr><td colspan="3">Pagar <b>${esc(c.descricao||"—")}</b> — valor: <input id="pgv_${c._id}" inputmode="decimal" style="width:120px" value="${c.valor!=null?String(c.valor).replace('.',','):''}"> · data: <input type="date" id="pg_${c._id}" value="${hojeISO()}"><div class="small muted" style="margin-top:4px">Pague um valor menor para quitar em partes — o restante fica em aberto nesta conta.</div></td><td class="r" style="white-space:nowrap"><button class="btn sm" onclick="confirmarPagamentoData('${c._id}')">Confirmar pagamento</button> <button class="btn ghost sm" onclick="contaPagId=null;render()">Cancelar</button></td></tr>`
           : c._id===contaRenegId
           ? `<tr><td colspan="4" style="background:#f3effb;border:1px solid #e3d9f7">
               <div style="font-weight:700;color:var(--purple-d);margin-bottom:8px">💜 Renegociar como dívida: ${esc(c.descricao||"—")}</div>
