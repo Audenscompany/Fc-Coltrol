@@ -1190,9 +1190,19 @@ function renderSaidas(el){
     </div>
     <button class="btn red" style="margin-top:12px" onclick="addSaida()">Lançar saída</button>
   </div></div>
-  <div class="card" style="margin-top:14px"><div class="hd"><h3>Saídas (${sai.length})</h3></div><div class="bd">
-    ${sai.length? `<table><thead><tr><th>Data</th><th>Loja</th><th>Categoria</th><th>Fornecedor</th><th>Descrição</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
-      sai.map(s=> s._id===saidaEditId ? linhaEdicaoSaida(s) : `<tr>
+  ${(()=>{
+    const q=saidaBusca.trim().toLowerCase();
+    const saiF = q ? sai.filter(s=>((s.fornecedor||"")+" "+(s.descricao||"")).toLowerCase().includes(q)) : sai;
+    const totalF = saiF.reduce((a,s)=>a+num(s.valor),0);
+    return `<div class="card" style="margin-top:14px"><div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px"><h3>Saídas (${saiF.length}${q?` de ${sai.length}`:''})</h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="buscaSaida" style="width:240px" placeholder="🔎 Buscar fornecedor ou descrição…" value="${esc(saidaBusca)}" onchange="setBuscaSaida(this.value)">
+        ${q?`<button class="btn ghost sm" onclick="setBuscaSaida('')">limpar</button>`:''}
+      </div></div>
+      ${q?`<div class="bd" style="padding-bottom:0"><div class="stat" style="display:inline-block;min-width:260px"><div class="lbl">Total pago a "${esc(saidaBusca)}"</div><div class="val neg">${reais(totalF)}</div><div class="hint">${saiF.length} saída(s) · todos os períodos</div></div></div>`:''}
+      <div class="bd">
+    ${saiF.length? `<table><thead><tr><th>Data</th><th>Loja</th><th>Categoria</th><th>Fornecedor</th><th>Descrição</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
+      saiF.map(s=> s._id===saidaEditId ? linhaEdicaoSaida(s) : `<tr>
         <td>${fmtData(s.data)}</td>
         <td><span class="pill">${esc(lojaNome(s.loja))}</span></td>
         <td>${catLabel(s.categoria)}</td>
@@ -1201,10 +1211,12 @@ function renderSaidas(el){
         <td class="r"><b class="neg">${reais(s.valor)}</b></td>
         <td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="editarSaidaInicio('${s._id}')">editar</button> <button class="btn ghost sm" onclick="removerMov('saidas','${s._id}')">excluir</button></td>
       </tr>`).join("")
-    }</tbody></table>` : `<div class="empty">Nenhuma saída ainda.</div>`}
+    }</tbody></table>` : `<div class="empty">${q?`Nenhuma saída encontrada para "${esc(saidaBusca)}".`:"Nenhuma saída ainda."}</div>`}
   </div></div>`;
+  })()}`;
 }
-let saidaEditId=null;
+let saidaEditId=null, saidaBusca="";
+function setBuscaSaida(v){ saidaBusca=v||""; render(); setTimeout(()=>{const i=document.getElementById("buscaSaida"); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},0); }
 function linhaEdicaoSaida(s){
   const optCat=categoriasSaidaTodas().map(c=>`<option value="${c.chave}"${c.chave===s.categoria?" selected":""}>${esc(c.label)}</option>`).join("");
   const optLoja=LOJAS.map(l=>`<option value="${l.id}"${l.id===s.loja?" selected":""}>${esc(lojaNome(l.id))}</option>`).join("");
