@@ -3666,6 +3666,10 @@ function renderEmprestimos(el){
   const lista = obj2arr(STATE.emprestimosNota).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
   const total = lista.reduce((s,x)=>s+num(x.valor),0);
   el.innerHTML = `
+  <div class="grid g2" style="margin-bottom:14px">
+    <div class="stat"><div class="lbl">Total em empréstimos</div><div class="val neg">${reais(total)}</div><div class="hint">${lista.length} anotação(ões) · só referência</div></div>
+    <div class="stat"><div class="lbl">Quantidade</div><div class="val">${lista.length}</div><div class="hint">empréstimos anotados</div></div>
+  </div>
   <div class="card" style="border-color:#f0d488;margin-bottom:14px"><div class="bd small">⚠️ Esta aba é só um <b>bloco de notas</b> dos empréstimos que você pegou — serve de lembrete. <b>Não</b> afeta fluxo de caixa, DRE nem contas a pagar. A data é opcional (nem precisa colocar).</div></div>
   <div class="card"><div class="hd"><h3>Anotar empréstimo</h3></div><div class="bd">
     <div class="row">
