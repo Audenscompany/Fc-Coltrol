@@ -345,7 +345,7 @@ const DB = (function(){
 })();
 
 /* ----------------------------- Estado em memória --------------------------- */
-const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, colabPago:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{}, wppConfig:{}, listaCompras:{} };
+const STATE = { insumos:{}, produtos:{}, saidas:{}, entradas:{}, parametros:{}, custos:{}, contas:{}, tarefas:{}, config:{}, receber:{}, usuarios:{}, vendas:{}, canais:{}, metas:{}, dividas:{}, dividasDet:{}, colaboradores:{}, colabDias:{}, estoqueItens:{}, estoqueCont:{}, custoRev:{}, colabPagto:{}, colabPago:{}, assinaturas:{}, assinPagtos:{}, logins:{}, tenants:{}, wppConfig:{}, listaCompras:{}, emprestimosNota:{} };
 
 /* ===================== LOGIN E PERMISSÕES ================================
    Login simples (nível de app): o GESTOR é fixo (acesso total); usuários extras
@@ -619,6 +619,7 @@ const PAGINAS = [
   {id:"calendario",icon:"📅",label:"Calendário",grupo:"FINANCEIRO",render:renderCalendario},
   {id:"dre",icon:"📑",label:"DRE (resultado)",grupo:"FINANCEIRO",render:renderDRE},
   {id:"dividas",icon:"🏛️",label:"Dívidas (CNPJ)",grupo:"FINANCEIRO",render:renderDividas},
+  {id:"emprestimos",icon:"🤝",label:"Empréstimos (notas)",grupo:"FINANCEIRO",render:renderEmprestimos},
   {id:"paineldiv",icon:"📊",label:"Painel de dívidas",grupo:"FINANCEIRO",render:renderPainelDividas},
   {id:"divneg",icon:"💜",label:"Dívidas negociadas",grupo:"FINANCEIRO",render:renderDividasNegociadas},
   {id:"custos",icon:"📒",label:"Custos fixos/variáveis",grupo:"CUSTOS E OPERAÇÃO",render:renderCustos},
@@ -3660,6 +3661,30 @@ function interpretarPlanilha(getSheet){
 }
 
 /* ===================== CONFIGURAÇÃO ======================================= */
+function renderEmprestimos(el){
+  document.getElementById("pgSub").textContent = "Bloco de notas dos empréstimos que você pegou — só pra lembrar. NÃO entra no fluxo de caixa.";
+  const lista = obj2arr(STATE.emprestimosNota).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  const total = lista.reduce((s,x)=>s+num(x.valor),0);
+  el.innerHTML = `
+  <div class="card" style="border-color:#f0d488;margin-bottom:14px"><div class="bd small">⚠️ Esta aba é só um <b>bloco de notas</b> dos empréstimos que você pegou — serve de lembrete. <b>Não</b> afeta fluxo de caixa, DRE nem contas a pagar. A data é opcional (nem precisa colocar).</div></div>
+  <div class="card"><div class="hd"><h3>Anotar empréstimo</h3></div><div class="bd">
+    <div class="row">
+      <div style="flex:2"><label class="f">De quem / o quê</label><input id="emp_desc" placeholder="Ex.: Empréstimo do tio João"></div>
+      <div><label class="f">Valor (R$) — opcional</label><input id="emp_val" inputmode="decimal" placeholder="0,00"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:1"><label class="f">Observação (opcional)</label><input id="emp_obs" placeholder="Ex.: separado no envelope / pagar quando puder"></div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="addEmprestimoNota()">Adicionar</button>
+  </div></div>
+  <div class="card" style="margin-top:14px"><div class="hd"><h3>Meus empréstimos (${lista.length})</h3>${total>0?`<p>Total anotado: <b class="neg">${reais(total)}</b> (só referência)</p>`:""}</div><div class="bd">
+    ${lista.length? `<table><thead><tr><th>De quem / o quê</th><th>Observação</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
+      lista.map(x=>`<tr><td><b>${esc(x.descricao||"—")}</b></td><td class="muted">${esc(x.obs||"—")}</td><td class="r">${x.valor?reais(x.valor):"—"}</td><td class="r"><button class="btn ghost sm" onclick="removerEmprestimoNota('${x._id}')">excluir</button></td></tr>`).join("")
+    }</tbody></table>` : `<div class="empty">Nenhum empréstimo anotado ainda.</div>`}
+  </div></div>`;
+}
+function addEmprestimoNota(){ const d=val("emp_desc"); if(!d) return toast("Escreva de quem/o quê é o empréstimo."); DB.push("emprestimosNota",{descricao:d,valor:num(val("emp_val")),obs:val("emp_obs")||"",criadoEm:Date.now()}); toast("Empréstimo anotado."); }
+function removerEmprestimoNota(id){ if(confirm("Excluir esta anotação?")) DB.remove("emprestimosNota/"+id); }
 function renderConfig(el){
   document.getElementById("pgSub").textContent = "Conecte o Firebase para salvar na nuvem e receber os comprovantes do WhatsApp.";
   const cfg = firebaseConfig? JSON.stringify(firebaseConfig,null,2) : "";
@@ -3683,8 +3708,23 @@ function renderConfig(el){
   </div></div>
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Como o WhatsApp entra aqui</h3></div><div class="bd small">
     A função do comprovante (pasta <code>funcao-comprovante</code>) recebe a foto/PDF do grupo via Z-API, lê com IA e grava em <code>caixa/saidas</code> com status <b>pendente</b>. Eles aparecem em Saídas para você confirmar. Veja o passo a passo no arquivo <b>GUIA.md</b>.
-  </div></div>`;
+  </div></div>
+  ${(()=>{ const link=(STATE.config&&STATE.config.mcpLink)||""; return `
+  <div class="card" style="margin-top:14px;border-color:#e3d9f7"><div class="hd"><h3>🔌 Conectar com a IA (Claude / MCP)</h3><p>O link que liga este sistema à Claude, para conversar e analisar os números. Guarde-o aqui e copie quando precisar: no app da Claude vá em Conectores → conector personalizado e cole este link.</p></div><div class="bd">
+    ${link? `<label class="f">Seu link de conexão</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="mcpLinkShow" readonly value="${esc(link)}" style="flex:1;min-width:280px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #d1d5db;border-radius:9px">
+        <button class="btn sm" onclick="copiarMcpLink()">Copiar link</button>
+      </div>
+      <div class="small" style="color:#b81f1f;margin-top:6px">⚠️ Não compartilhe este link — ele dá acesso aos seus números.</div>
+      <div style="border-top:1px solid var(--line);margin:12px 0"></div>` : `<div class="small muted" style="margin-bottom:8px">Ainda não há link salvo. Cole o link que a Claude te passou e salve — assim ele fica guardado aqui para sempre.</div>`}
+    <label class="f">${link?"Atualizar link":"Cole aqui o link de conexão"}</label>
+    <input id="mcpLinkIn" placeholder="https://...run.app/?mcp=1&key=..." style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid #d1d5db;border-radius:9px" value="${esc(link)}">
+    <div style="margin-top:10px"><button class="btn" onclick="salvarMcpLink()">Salvar link</button></div>
+  </div></div>`; })()}`;
 }
+function salvarMcpLink(){ const v=(val("mcpLinkIn")||"").trim(); DB.update("config",{mcpLink:v}); toast(v?"Link salvo.":"Link removido."); }
+function copiarMcpLink(){ const el=document.getElementById("mcpLinkShow"); if(!el) return; const t=el.value; const done=()=>toast("Link copiado!"); if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done).catch(()=>{ el.select(); try{document.execCommand("copy");}catch(_){ } done(); }); } else { el.select(); try{document.execCommand("copy");}catch(_){ } done(); } }
 // HTML da seção de identidade visual (usada na página Estabelecimentos).
 function identidadeVisualHTML(){
   return `<div class="card"><div class="hd"><h3>Identidade visual</h3><p>Suba a logo do painel e a de cada estabelecimento (PNG/JPG, de preferência quadrada). Elas aparecem na barra e no Dashboard.</p></div><div class="bd">
@@ -3857,6 +3897,7 @@ function boot(){
   bind("assinaturas","assinaturas");
   bind("assinPagtos","assinPagtos");
   bind("listaCompras","listaCompras");
+  bind("emprestimosNota","emprestimosNota");
   DB.list("parametros", v=>{ STATE.parametros = v||{}; migrarPrecParaLojas(); if(sessaoValida()) render(); });
   DB.list("config", v=>{ STATE.config = v||{}; aplicarPainelLogo(); if(sessaoValida()) render(); });
   if(sessaoValida()) entrarApp(); else mostrarLogin();
