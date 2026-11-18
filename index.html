@@ -3661,6 +3661,19 @@ function interpretarPlanilha(getSheet){
 }
 
 /* ===================== CONFIGURAÇÃO ======================================= */
+// Zera APENAS lançamentos (entradas, saídas, contas a pagar, dívidas) da base ATUAL.
+// Só funciona em modo suporte (base de cliente) — nunca toca na base principal.
+// Em suporte, o DB usa o prefixo t/<tenant>/, então remove só os nós daquele cliente.
+function zerarLancamentosBase(){
+  if(!(SESSAO && SESSAO.suporte)) return toast("Disponível só no modo suporte (base de cliente).");
+  const nome = SESSAO.suporteNome || SESSAO.tenant;
+  const alvo = prompt('⚠️ Isso vai APAGAR DEFINITIVAMENTE todas as Entradas, Saídas, Contas a pagar e Dívidas da base "'+nome+'".\nCadastros, configurações, logo e colaboradores NÃO são apagados.\n\nPara confirmar, digite exatamente o nome da base:');
+  if(alvo==null) return;
+  if(String(alvo||"").trim().toLowerCase() !== String(nome).trim().toLowerCase()) return toast("Nome não confere — cancelado.");
+  if(!confirm('Última confirmação: zerar Entradas, Saídas, Contas a pagar e Dívidas da base "'+nome+'"?\nNÃO dá pra desfazer.')) return;
+  ["caixa/entradas","caixa/saidas","contas","dividas","dividasDet","vendas"].forEach(p=>DB.remove(p));
+  toast('Lançamentos zerados na base "'+nome+'".');
+}
 function renderEmprestimos(el){
   document.getElementById("pgSub").textContent = "Bloco de notas dos empréstimos que você pegou — só pra lembrar. NÃO entra no fluxo de caixa.";
   const lista = obj2arr(STATE.emprestimosNota).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
@@ -3693,6 +3706,7 @@ function renderConfig(el){
   document.getElementById("pgSub").textContent = "Conecte o Firebase para salvar na nuvem e receber os comprovantes do WhatsApp.";
   const cfg = firebaseConfig? JSON.stringify(firebaseConfig,null,2) : "";
   el.innerHTML = `
+  ${(SESSAO && SESSAO.suporte)? `<div class="card" style="border:2px solid #b81f1f;margin-bottom:14px"><div class="hd"><h3 style="color:#b81f1f">⚠️ Zerar lançamentos desta base (cliente)</h3><p>Apaga <b>Entradas, Saídas, Contas a pagar e Dívidas</b> da base <b>${esc(SESSAO.suporteNome||SESSAO.tenant)}</b>. Cadastros, configurações, logo e colaboradores <b>ficam</b>. Esta ação <b>não dá pra desfazer</b>.</p></div><div class="bd"><button class="btn red" onclick="zerarLancamentosBase()">Zerar lançamentos desta base</button></div></div>`:""}
   <div class="card"><div class="hd"><h3>Firebase (nuvem + WhatsApp)</h3><p>No console do Firebase: ⚙️ Configurações do projeto → Seus apps (Web) → copie o objeto firebaseConfig e cole aqui. Sem isso, o app roda em "modo local" só neste navegador.</p></div><div class="bd">
     <label class="f">Cole aqui o firebaseConfig (JSON)</label>
     <textarea id="cfg" style="width:100%;height:170px;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:9px;padding:10px" placeholder='{
