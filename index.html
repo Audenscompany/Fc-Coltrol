@@ -3674,11 +3674,31 @@ function zerarLancamentosBase(){
   ["caixa/entradas","caixa/saidas","contas","dividas","dividasDet","vendas"].forEach(p=>DB.remove(p));
   toast('Lançamentos zerados na base "'+nome+'".');
 }
+let emprestimoEditId=null;
 function renderEmprestimos(el){
   document.getElementById("pgSub").textContent = "Bloco de notas dos empréstimos que você pegou — só pra lembrar. NÃO entra no fluxo de caixa.";
   const lista = obj2arr(STATE.emprestimosNota).sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
   const total = lista.reduce((s,x)=>s+num(x.valor),0);
+  const contas = [...new Set(lista.map(x=>x.conta).filter(Boolean))].sort();
+  const porConta = {}; lista.forEach(x=>{ const k=x.conta||"(sem conta)"; porConta[k]=(porConta[k]||0)+num(x.valor); });
+  const grupos = Object.entries(porConta).sort((a,b)=>b[1]-a[1]);
+  const temResumo = grupos.some(g=>g[0]!=="(sem conta)");
+  const linhaEmp = x => {
+    if(x._id===emprestimoEditId){
+      return `<tr><td colspan="4" style="background:#f6f2fe;padding:12px">
+        <div class="row">
+          <div style="flex:2"><label class="f">De quem / o quê</label><input id="eme_desc_${x._id}" value="${esc(x.descricao||'')}"></div>
+          <div><label class="f">Conta / origem</label><input id="eme_conta_${x._id}" list="contasEmp" value="${esc(x.conta||'')}"></div>
+          <div><label class="f">Valor (R$)</label><input id="eme_val_${x._id}" inputmode="decimal" value="${x.valor!=null?String(x.valor).replace('.',','):''}"></div>
+        </div>
+        <div class="row" style="margin-top:10px"><div style="flex:1"><label class="f">Observação</label><input id="eme_obs_${x._id}" value="${esc(x.obs||'')}"></div></div>
+        <div style="margin-top:10px;display:flex;gap:8px"><button class="btn sm" onclick="salvarEmprestimoNota('${x._id}')">Salvar</button><button class="btn ghost sm" onclick="emprestimoEditId=null;render()">Cancelar</button></div>
+      </td></tr>`;
+    }
+    return `<tr><td><b>${esc(x.descricao||"—")}</b>${x.conta?` <span class="pill">${esc(x.conta)}</span>`:""}</td><td class="muted">${esc(x.obs||"—")}</td><td class="r">${x.valor?reais(x.valor):"—"}</td><td class="r" style="white-space:nowrap"><button class="btn ghost sm" onclick="editarEmprestimoInicio('${x._id}')">editar</button> <button class="btn ghost sm" onclick="removerEmprestimoNota('${x._id}')">excluir</button></td></tr>`;
+  };
   el.innerHTML = `
+  <datalist id="contasEmp">${contas.map(c=>`<option value="${esc(c)}">`).join("")}</datalist>
   <div class="grid g2" style="margin-bottom:14px">
     <div class="stat"><div class="lbl">Total em empréstimos</div><div class="val neg">${reais(total)}</div><div class="hint">${lista.length} anotação(ões) · só referência</div></div>
     <div class="stat"><div class="lbl">Quantidade</div><div class="val">${lista.length}</div><div class="hint">empréstimos anotados</div></div>
@@ -3687,6 +3707,7 @@ function renderEmprestimos(el){
   <div class="card"><div class="hd"><h3>Anotar empréstimo</h3></div><div class="bd">
     <div class="row">
       <div style="flex:2"><label class="f">De quem / o quê</label><input id="emp_desc" placeholder="Ex.: Empréstimo do tio João"></div>
+      <div><label class="f">Conta / origem (opcional)</label><input id="emp_conta" list="contasEmp" placeholder="Ex.: Conta FC Pizza"></div>
       <div><label class="f">Valor (R$) — opcional</label><input id="emp_val" inputmode="decimal" placeholder="0,00"></div>
     </div>
     <div class="row" style="margin-top:10px">
@@ -3694,13 +3715,14 @@ function renderEmprestimos(el){
     </div>
     <button class="btn" style="margin-top:12px" onclick="addEmprestimoNota()">Adicionar</button>
   </div></div>
+  ${temResumo? `<div class="card" style="margin-top:14px;border-color:#e3d9f7"><div class="hd"><h3>Total por conta / origem</h3><p>Soma dos empréstimos agrupados pela conta de onde vieram.</p></div><div class="bd"><table><tbody>${grupos.map(([c,v])=>`<tr><td><b>${esc(c)}</b></td><td class="r"><b class="neg">${reais(v)}</b></td></tr>`).join("")}<tr style="border-top:2px solid var(--ink)"><td><b>Total geral</b></td><td class="r"><b class="neg">${reais(total)}</b></td></tr></tbody></table></div></div>`:""}
   <div class="card" style="margin-top:14px"><div class="hd"><h3>Meus empréstimos (${lista.length})</h3>${total>0?`<p>Total anotado: <b class="neg">${reais(total)}</b> (só referência)</p>`:""}</div><div class="bd">
-    ${lista.length? `<table><thead><tr><th>De quem / o quê</th><th>Observação</th><th class="r">Valor</th><th></th></tr></thead><tbody>${
-      lista.map(x=>`<tr><td><b>${esc(x.descricao||"—")}</b></td><td class="muted">${esc(x.obs||"—")}</td><td class="r">${x.valor?reais(x.valor):"—"}</td><td class="r"><button class="btn ghost sm" onclick="removerEmprestimoNota('${x._id}')">excluir</button></td></tr>`).join("")
-    }</tbody></table>` : `<div class="empty">Nenhum empréstimo anotado ainda.</div>`}
+    ${lista.length? `<table><thead><tr><th>De quem / o quê</th><th>Observação</th><th class="r">Valor</th><th></th></tr></thead><tbody>${lista.map(linhaEmp).join("")}</tbody></table>` : `<div class="empty">Nenhum empréstimo anotado ainda.</div>`}
   </div></div>`;
 }
-function addEmprestimoNota(){ const d=val("emp_desc"); if(!d) return toast("Escreva de quem/o quê é o empréstimo."); DB.push("emprestimosNota",{descricao:d,valor:num(val("emp_val")),obs:val("emp_obs")||"",criadoEm:Date.now()}); toast("Empréstimo anotado."); }
+function addEmprestimoNota(){ const d=val("emp_desc"); if(!d) return toast("Escreva de quem/o quê é o empréstimo."); DB.push("emprestimosNota",{descricao:d,conta:val("emp_conta")||"",valor:num(val("emp_val")),obs:val("emp_obs")||"",criadoEm:Date.now()}); toast("Empréstimo anotado."); }
+function editarEmprestimoInicio(id){ emprestimoEditId=id; render(); }
+function salvarEmprestimoNota(id){ const d=val("eme_desc_"+id); if(!d) return toast("Informe de quem/o quê é o empréstimo."); DB.update("emprestimosNota/"+id,{descricao:d,conta:val("eme_conta_"+id)||"",valor:num(val("eme_val_"+id)),obs:val("eme_obs_"+id)||""}); emprestimoEditId=null; toast("Empréstimo atualizado."); }
 function removerEmprestimoNota(id){ if(confirm("Excluir esta anotação?")) DB.remove("emprestimosNota/"+id); }
 function renderConfig(el){
   document.getElementById("pgSub").textContent = "Conecte o Firebase para salvar na nuvem e receber os comprovantes do WhatsApp.";
